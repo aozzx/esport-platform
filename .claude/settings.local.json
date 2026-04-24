@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E \"\\\\.\\(ts|tsx|json\\)$\")",
+      "Bash(xargs grep *)",
+      "Bash(npx supabase *)",
+      "Bash(magick --version)",
+      "Bash(convert --version)",
+      "Bash(node -e \"const sharp = require\\('sharp'\\); console.log\\('sharp ok'\\);\")",
+      "Bash(node -)",
+      "Bash(node -e ' *)",
+      "Bash(node -e \"const p=require\\('./node_modules/next/package.json'\\);console.log\\(p.version\\)\")"
+    ]
+  }
+}
