@@ -112,7 +112,7 @@ export async function POST(
         .maybeSingle(),
     ]);
 
-    const standingUpdates: Promise<unknown>[] = [];
+    const standingUpdates: PromiseLike<unknown>[] = [];
 
     if (winnerStanding) {
       standingUpdates.push(
