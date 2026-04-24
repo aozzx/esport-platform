@@ -11,8 +11,8 @@ export async function proxy(request: NextRequest) {
       cookies: {
         getAll() { return request.cookies.getAll(); },
         setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value)
+          cookiesToSet.forEach(({ name, value, options }) =>
+            request.cookies.set(name, value, options)
           );
           supabaseResponse = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
@@ -43,7 +43,9 @@ export async function proxy(request: NextRequest) {
   );
 
   if (isProtected && !user) {
-    return NextResponse.redirect(new URL("/sign-in", request.url));
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = "/sign-in";
+    return NextResponse.redirect(redirectUrl);
   }
 
   return supabaseResponse;
