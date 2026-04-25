@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import Link from "next/link";
 import Navbar from "@/components/Navbar";
 import BadgeList from "@/components/BadgeList";
 
@@ -177,7 +178,7 @@ export default function LeaderboardPage() {
                 </div>
 
                 {teamStandings.map((s, index) => (
-                  <div key={s.team_id} className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${rankBg(index)}`}>
+                  <Link key={s.team_id} href={`/teams/${s.team_id}`} className={`flex items-center gap-3 px-4 py-3 rounded-xl border hover:brightness-125 transition-all duration-150 ${rankBg(index)}`}>
                     <span className={`text-xs font-bold w-5 ${rankColor(index)}`}>{index + 1}</span>
                     <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500/20 to-indigo-600/20 border border-violet-500/20 flex items-center justify-center shrink-0">
                       {isSafeImageUrl(s.teams?.logo_url) ? (
@@ -193,7 +194,7 @@ export default function LeaderboardPage() {
                     <span className="w-12 text-center text-sm text-green-400">{s.wins}</span>
                     <span className="w-12 text-center text-sm text-red-400">{s.losses}</span>
                     <span className="w-14 text-center text-sm font-bold text-violet-400">{s.points}</span>
-                  </div>
+                  </Link>
                 ))}
               </div>
             )}
@@ -216,7 +217,7 @@ export default function LeaderboardPage() {
                 </div>
 
                 {players.map((p, index) => (
-                  <div key={p.id} className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${rankBg(index)}`}>
+                  <Link key={p.id} href={`/profile/${p.username}`} className={`flex items-center gap-3 px-4 py-3 rounded-xl border hover:brightness-125 transition-all duration-150 ${rankBg(index)}`}>
                     <span className={`text-xs font-bold w-5 ${rankColor(index)}`}>{index + 1}</span>
                     <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0">
                       {isSafeImageUrl(p.avatar_url) ? (
@@ -233,7 +234,7 @@ export default function LeaderboardPage() {
                     </div>
                     <span className="w-16 text-center text-sm text-green-400">{p.wins}</span>
                     <span className="w-16 text-center text-sm text-yellow-400 font-bold">{p.titles} 🏆</span>
-                  </div>
+                  </Link>
                 ))}
               </div>
             )}
