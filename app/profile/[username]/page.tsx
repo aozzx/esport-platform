@@ -98,7 +98,7 @@ export default function PublicProfilePage() {
 
       const [{ data: viewerProfile }, { data: targetProfile, error: targetError }] = await Promise.all([
         supabase.from("profiles").select("username").eq("id", user.id).maybeSingle(),
-        supabase.from("profiles").select("id, username, activision_id, avatar_url, role, badges").eq("username", targetUsername).maybeSingle(),
+        supabase.from("profiles").select("id, username, activision_id, avatar_url, role, badges, twitch_url, youtube_url, x_url, tiktok_url").eq("username", targetUsername).maybeSingle(),
       ]);
 
       console.log("[profile] targetProfile:", targetProfile, "error:", targetError);
