@@ -88,15 +88,17 @@ export default function LeaderboardPage() {
         .select("id, username, avatar_url, badges")
         .order("username");
 
-      type RawProfile = { id: string; username: string; avatar_url: string | null; badges: object[] | null };
-      const playersData = (profiles as RawProfile[] ?? []).map((p) => ({
-        id: p.id,
-        username: p.username,
-        avatar_url: p.avatar_url,
-        wins: 0,
-        titles: 0,
-        badges: p.badges,
-      }));
+      type RawProfile = { id: string; username: string | null; avatar_url: string | null; badges: object[] | null };
+      const playersData = (profiles as RawProfile[] ?? [])
+        .filter((p) => !!p.username)
+        .map((p) => ({
+          id: p.id,
+          username: p.username as string,
+          avatar_url: p.avatar_url,
+          wins: 0,
+          titles: 0,
+          badges: p.badges,
+        }));
 
       setPlayers(playersData);
       setLoading(false);
