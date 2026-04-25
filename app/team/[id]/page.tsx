@@ -52,6 +52,15 @@ export default function TeamPage() {
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState("");
 
+  const [userId, setUserId] = useState<string | null>(null);
+  const [leaving, setLeaving] = useState(false);
+  const [leaveError, setLeaveError] = useState("");
+  const [transferTargetId, setTransferTargetId] = useState("");
+  const [transferring, setTransferring] = useState(false);
+  const [transferError, setTransferError] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+
   const [logoUploading, setLogoUploading] = useState(false);
   const [logoError, setLogoError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -71,6 +80,8 @@ export default function TeamPage() {
         router.push("/sign-in");
         return;
       }
+
+      setUserId(user.id);
 
       const [profileResult, teamResult] = await Promise.all([
         supabase
@@ -269,6 +280,66 @@ export default function TeamPage() {
     setRemovingId(null);
   }
 
+  async function handleLeave() {
+    if (!confirm("Are you sure you want to leave this team?")) return;
+    setLeaving(true);
+    setLeaveError("");
+    const { data: { user: freshUser } } = await supabase.auth.getUser();
+    if (!freshUser) { router.push("/sign-in"); setLeaving(false); return; }
+    const { error } = await supabase
+      .from("team_members")
+      .delete()
+      .eq("team_id", teamId)
+      .eq("user_id", freshUser.id);
+    if (error) {
+      setLeaveError("Failed to leave team. Please try again.");
+      setLeaving(false);
+      return;
+    }
+    router.push("/teams");
+  }
+
+  async function handleTransferCaptaincy() {
+    const nonCaptains = members.filter((m) => m.user_id !== team?.captain_id);
+    const target = transferTargetId || nonCaptains[0]?.user_id;
+    if (!target) return;
+    const targetName = members.find((m) => m.user_id === target)?.profiles?.username ?? "this member";
+    if (!confirm(`Transfer captaincy to ${targetName}? You will become a regular member.`)) return;
+    setTransferring(true);
+    setTransferError("");
+    const { error } = await supabase.rpc("transfer_captaincy", {
+      p_team_id: teamId,
+      p_new_captain_id: target,
+    });
+    if (error) {
+      setTransferError("Transfer failed. Please try again.");
+      setTransferring(false);
+      return;
+    }
+    const prevCaptainId = team!.captain_id;
+    setIsCaptain(false);
+    setTeam((prev) => prev ? { ...prev, captain_id: target } : prev);
+    setMembers((prev) => prev.map((m) => {
+      if (m.user_id === target) return { ...m, role: "captain" };
+      if (m.user_id === prevCaptainId) return { ...m, role: "member" };
+      return m;
+    }));
+    setTransferring(false);
+  }
+
+  async function handleDeleteTeam() {
+    if (!confirm(`Permanently delete "${team?.team_name}"? This cannot be undone.`)) return;
+    setDeleting(true);
+    setDeleteError("");
+    const { error } = await supabase.rpc("delete_team", { p_team_id: teamId });
+    if (error) {
+      setDeleteError("Failed to delete team. Please try again.");
+      setDeleting(false);
+      return;
+    }
+    router.push("/teams");
+  }
+
   function fmtDate(d: string) {
     return new Date(d).toLocaleDateString("en-US", {
       year: "numeric",
@@ -292,6 +363,9 @@ export default function TeamPage() {
   }
 
   if (!team) return null;
+
+  const otherMembers = members.filter((m) => m.user_id !== team.captain_id);
+  const isOnlyMember = isCaptain && members.length <= 1;
 
   return (
     <div className="min-h-screen bg-gray-950 text-white font-sans">
@@ -413,9 +487,14 @@ export default function TeamPage() {
                       </div>
                     )}
                     <div>
-                      <p className="text-sm font-medium text-white">
-                        {member.profiles?.username ?? "Unknown"}
-                      </p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-sm font-medium text-white">
+                          {member.profiles?.username ?? "Unknown"}
+                        </p>
+                        {member.user_id === userId && (
+                          <span className="text-xs text-gray-600">(you)</span>
+                        )}
+                      </div>
                       <p className="text-xs text-gray-500">Joined {fmtDate(member.joined_at)}</p>
                     </div>
                   </div>
@@ -505,6 +584,145 @@ export default function TeamPage() {
               </button>
             </form>
             <p className="text-xs text-gray-600 mt-2">Enter the exact username of the player</p>
+          </div>
+        )}
+
+        {/* Transfer Captaincy — captain with other members */}
+        {isCaptain && otherMembers.length > 0 && (
+          <div className="rounded-2xl border border-orange-500/15 bg-orange-500/5 p-6 space-y-4">
+            <div>
+              <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                <svg className="w-4 h-4 text-orange-400" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
+                </svg>
+                Transfer Captaincy
+              </h2>
+              <p className="text-xs text-gray-500 mt-1">Pass the captain role to another member. After transferring you can leave.</p>
+            </div>
+
+            {transferError && (
+              <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+                <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+                {transferError}
+              </div>
+            )}
+
+            <div className="flex items-center gap-3">
+              <select
+                value={transferTargetId || otherMembers[0]?.user_id}
+                onChange={(e) => setTransferTargetId(e.target.value)}
+                className="flex-1 px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 transition-colors duration-200"
+              >
+                {otherMembers.map((m) => (
+                  <option key={m.user_id} value={m.user_id} className="bg-gray-900 text-white">
+                    {m.profiles?.username ?? m.user_id}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={handleTransferCaptaincy}
+                disabled={transferring}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-orange-500/20 hover:bg-orange-500/30 border border-orange-500/20 disabled:opacity-50 disabled:cursor-not-allowed text-orange-300 text-sm font-medium transition-all duration-200 whitespace-nowrap"
+              >
+                {transferring ? (
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                ) : "Transfer"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Delete Team — captain is sole member */}
+        {isOnlyMember && (
+          <div className="rounded-2xl border border-red-500/15 bg-red-500/5 p-6 space-y-4">
+            <div>
+              <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                </svg>
+                Delete Team
+              </h2>
+              <p className="text-xs text-gray-500 mt-1">You are the only member. This permanently removes the team.</p>
+            </div>
+
+            {deleteError && (
+              <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+                <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+                {deleteError}
+              </div>
+            )}
+
+            <button
+              onClick={handleDeleteTeam}
+              disabled={deleting}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed text-red-400 text-sm font-medium transition-all duration-200"
+            >
+              {deleting ? (
+                <>
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                  </svg>
+                  Delete Team
+                </>
+              )}
+            </button>
+          </div>
+        )}
+
+        {/* Leave Team — regular members only */}
+        {!isCaptain && (
+          <div className="rounded-2xl border border-red-500/15 bg-red-500/5 p-6 space-y-4">
+            <div>
+              <h2 className="text-sm font-semibold text-white">Leave Team</h2>
+              <p className="text-xs text-gray-500 mt-1">You will be permanently removed from this team.</p>
+            </div>
+
+            {leaveError && (
+              <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+                <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+                {leaveError}
+              </div>
+            )}
+
+            <button
+              onClick={handleLeave}
+              disabled={leaving}
+              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-500/20 disabled:opacity-50 disabled:cursor-not-allowed text-red-400 text-sm font-medium transition-all duration-200"
+            >
+              {leaving ? (
+                <>
+                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Leaving...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
+                  </svg>
+                  Leave Team
+                </>
+              )}
+            </button>
           </div>
         )}
 
