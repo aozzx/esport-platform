@@ -5,6 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import Navbar from "@/components/Navbar";
 import BadgeList from "@/components/BadgeList";
+import { FaTwitch, FaYoutube, FaTiktok, FaXTwitter } from "react-icons/fa6";
 
 function isSafeImageUrl(url: string | null | undefined): boolean {
   if (!url) return false;
@@ -42,6 +43,10 @@ type Profile = {
   avatar_url: string | null;
   role: string | null;
   badges: object[] | null;
+  twitch_url: string | null;
+  youtube_url: string | null;
+  x_url: string | null;
+  tiktok_url: string | null;
 };
 
 type TeamMembership = {
@@ -91,7 +96,7 @@ export default function PublicProfilePage() {
 
       const [{ data: viewerProfile }, { data: targetProfile }] = await Promise.all([
         supabase.from("profiles").select("username").eq("id", user.id).maybeSingle(),
-        supabase.from("profiles").select("id, username, activision_id, avatar_url, role, badges").eq("username", targetUsername).maybeSingle(),
+        supabase.from("profiles").select("id, username, activision_id, avatar_url, role, badges, twitch_url, youtube_url, x_url, tiktok_url").eq("username", targetUsername).maybeSingle(),
       ]);
 
       setViewerUsername(viewerProfile?.username ?? null);
@@ -265,6 +270,39 @@ export default function PublicProfilePage() {
                 )}
               </div>
             </div>
+          {/* Social links */}
+          {(profile!.twitch_url || profile!.youtube_url || profile!.x_url || profile!.tiktok_url) && (
+            <div className="mt-4 flex items-center gap-2 flex-wrap">
+              {isSafeImageUrl(profile!.twitch_url) && (
+                <a href={profile!.twitch_url!} target="_blank" rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-300 hover:bg-purple-500/20 transition-colors duration-150 text-xs font-medium">
+                  <FaTwitch className="w-3.5 h-3.5" />
+                  Twitch
+                </a>
+              )}
+              {isSafeImageUrl(profile!.youtube_url) && (
+                <a href={profile!.youtube_url!} target="_blank" rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/20 text-red-300 hover:bg-red-500/20 transition-colors duration-150 text-xs font-medium">
+                  <FaYoutube className="w-3.5 h-3.5" />
+                  YouTube
+                </a>
+              )}
+              {isSafeImageUrl(profile!.x_url) && (
+                <a href={profile!.x_url!} target="_blank" rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-gray-300 hover:bg-white/10 transition-colors duration-150 text-xs font-medium">
+                  <FaXTwitter className="w-3.5 h-3.5" />
+                  X
+                </a>
+              )}
+              {isSafeImageUrl(profile!.tiktok_url) && (
+                <a href={profile!.tiktok_url!} target="_blank" rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 hover:bg-cyan-500/20 transition-colors duration-150 text-xs font-medium">
+                  <FaTiktok className="w-3.5 h-3.5" />
+                  TikTok
+                </a>
+              )}
+            </div>
+          )}
           </div>
         </div>
 

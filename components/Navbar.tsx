@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import UserDropdown from "./UserDropdown";
 import SupportButton from "./SupportButton";
+import NotificationBell from "./NotificationBell";
 
 type Props = { username?: string | null };
 
@@ -88,7 +89,10 @@ export default function Navbar({ username }: Props) {
         {/* Right side */}
         <div className="flex items-center gap-3 min-w-[120px] justify-end">
           {username ? (
-            <UserDropdown username={username} role={role} />
+            <>
+              <NotificationBell />
+              <UserDropdown username={username} role={role} />
+            </>
           ) : (
             <>
               <a

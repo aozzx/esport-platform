@@ -11,7 +11,9 @@
       "Bash(node -e ' *)",
       "Bash(node -e \"const p=require\\('./node_modules/next/package.json'\\);console.log\\(p.version\\)\")",
       "Bash(npm run *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(node -e \"require\\('react-icons'\\)\")",
+      "Bash(npm install *)"
     ]
   }
 }
