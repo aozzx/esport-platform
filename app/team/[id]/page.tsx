@@ -236,7 +236,7 @@ export default function TeamPage() {
       setInviteError(
         error.code === "23505"
           ? "This player already has a pending invite or is already a member."
-          : error.code === "23503"
+          : error.details?.includes("profiles")
           ? "This player has not completed their profile setup yet."
           : "Failed to send invite. Please try again."
       );
