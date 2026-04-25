@@ -68,10 +68,15 @@ export default function SignUpPage() {
       return;
     }
 
-    // Step 2: Sign up with Supabase Auth
+    // Step 2: Sign up with Supabase Auth (trigger handles profile creation)
     const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        data: {
+          username: username.trim().toLowerCase(),
+        },
+      },
     });
 
     if (signUpError) {
@@ -92,39 +97,8 @@ export default function SignUpPage() {
       return;
     }
 
-    const user = signUpData.user;
-
-    if (!user) {
+    if (!signUpData.user) {
       setError("Something went wrong. Please try again.");
-      setLoading(false);
-      return;
-    }
-
-    // Step 3: Insert into profiles table (including email)
-    const { error: profileError } = await supabase
-      .from("profiles")
-      .insert({
-        id: user.id,
-        username: username.trim().toLowerCase(),
-        email: email.trim().toLowerCase(),
-        role: "player",
-      });
-
-    if (profileError) {
-      // Auth user was created but profile insert failed — sign out so the user
-      // can retry cleanly. The orphaned auth account will be recycled on next
-      // sign-up attempt with the same email.
-      await supabase.auth.signOut();
-
-      if (
-        profileError.code === "23505" ||
-        profileError.message.toLowerCase().includes("unique") ||
-        profileError.message.toLowerCase().includes("duplicate")
-      ) {
-        setError("Username already taken.");
-      } else {
-        setError("Account setup failed. Please try again.");
-      }
       setLoading(false);
       return;
     }
