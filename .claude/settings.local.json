@@ -14,6 +14,9 @@
       "Bash(npx tsc *)",
       "Bash(node -e \"require\\('react-icons'\\)\")",
       "Bash(npm install *)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\PC\\esports-platform\\app\\teams"
     ]
   }
 }
