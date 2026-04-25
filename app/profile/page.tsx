@@ -458,6 +458,34 @@ export default function ProfilePage() {
               <p className="text-sm text-gray-500 mt-1">
                 Member since {formatLong(profile.created_at)}
               </p>
+              {!editMode && (profile.twitch_url || profile.youtube_url || profile.x_url || profile.tiktok_url) && (
+                <div className="flex items-center gap-2 mt-2 flex-wrap">
+                  {profile.twitch_url && (
+                    <a href={profile.twitch_url} target="_blank" rel="noopener noreferrer" aria-label="Twitch"
+                      className="flex items-center justify-center w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-300 hover:bg-purple-500/20 transition-colors duration-150">
+                      <FaTwitch className="w-3.5 h-3.5" />
+                    </a>
+                  )}
+                  {profile.youtube_url && (
+                    <a href={profile.youtube_url} target="_blank" rel="noopener noreferrer" aria-label="YouTube"
+                      className="flex items-center justify-center w-8 h-8 rounded-lg bg-red-500/10 border border-red-500/20 text-red-300 hover:bg-red-500/20 transition-colors duration-150">
+                      <FaYoutube className="w-3.5 h-3.5" />
+                    </a>
+                  )}
+                  {profile.x_url && (
+                    <a href={profile.x_url} target="_blank" rel="noopener noreferrer" aria-label="X"
+                      className="flex items-center justify-center w-8 h-8 rounded-lg bg-white/5 border border-white/10 text-gray-300 hover:bg-white/10 transition-colors duration-150">
+                      <FaXTwitter className="w-3.5 h-3.5" />
+                    </a>
+                  )}
+                  {profile.tiktok_url && (
+                    <a href={profile.tiktok_url} target="_blank" rel="noopener noreferrer" aria-label="TikTok"
+                      className="flex items-center justify-center w-8 h-8 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 hover:bg-cyan-500/20 transition-colors duration-150">
+                      <FaTiktok className="w-3.5 h-3.5" />
+                    </a>
+                  )}
+                </div>
+              )}
               {avatarError && (
                 <p className="text-xs text-red-400 mt-1">{avatarError}</p>
               )}

@@ -94,14 +94,10 @@ export default function PublicProfilePage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push("/sign-in"); return; }
 
-      console.log("[profile] targetUsername from params:", targetUsername);
-
-      const [{ data: viewerProfile }, { data: targetProfile, error: targetError }] = await Promise.all([
+      const [{ data: viewerProfile }, { data: targetProfile }] = await Promise.all([
         supabase.from("profiles").select("username").eq("id", user.id).maybeSingle(),
         supabase.from("profiles").select("id, username, activision_id, avatar_url, role, badges, twitch_url, youtube_url, x_url, tiktok_url").eq("username", targetUsername).maybeSingle(),
       ]);
-
-      console.log("[profile] targetProfile:", targetProfile, "error:", targetError);
 
       setViewerUsername(viewerProfile?.username ?? null);
 
