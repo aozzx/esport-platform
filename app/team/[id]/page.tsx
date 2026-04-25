@@ -157,16 +157,17 @@ export default function TeamPage() {
 
   async function handleInvite(e: React.SyntheticEvent) {
     e.preventDefault();
+    if (inviting) return;
+    setInviting(true);
     setInviteError("");
     setInviteSuccess("");
 
     if (Date.now() < inviteCooldownUntil) {
       const secsLeft = Math.ceil((inviteCooldownUntil - Date.now()) / 1000);
       setInviteError(`Please wait ${secsLeft}s before sending another invite.`);
+      setInviting(false);
       return;
     }
-
-    setInviting(true);
 
     const trimmed = inviteUsername.trim().toLowerCase();
     if (!trimmed) {
@@ -231,7 +232,12 @@ export default function TeamPage() {
     });
 
     if (error) {
-      setInviteError("Failed to send invite. Please try again.");
+      console.log("[invite] error:", error);
+      setInviteError(
+        error.code === "23505"
+          ? "This player already has a pending invite or is already a member."
+          : "Failed to send invite. Please try again."
+      );
       setInviting(false);
       return;
     }
