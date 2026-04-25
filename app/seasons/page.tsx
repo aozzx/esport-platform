@@ -475,7 +475,11 @@ export default function SeasonsPage() {
       .single();
 
     if (error) {
-      setQueueError("Failed to join queue. Please try again.");
+      if (error.code === "23514" || error.message?.includes("at least 4 members")) {
+        setQueueError(error.message ?? "Your team must have at least 4 members to join the queue.");
+      } else {
+        setQueueError("Failed to join queue. Please try again.");
+      }
       setJoiningQueue(false);
       return;
     }

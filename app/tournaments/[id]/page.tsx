@@ -216,7 +216,11 @@ export default function TournamentDetailPage() {
       });
 
     if (error) {
-      setRegisterError("Failed to register. Please try again.");
+      if (error.code === "23514" || error.message?.includes("at least 4 members")) {
+        setRegisterError(error.message ?? "Your team must have at least 4 members to register.");
+      } else {
+        setRegisterError("Failed to register. Please try again.");
+      }
       setRegistering(false);
       return;
     }
