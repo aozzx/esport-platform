@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import Navbar from "@/components/Navbar";
 import BadgeList from "@/components/BadgeList";
+import { FaTwitch, FaYoutube, FaTiktok, FaXTwitter } from "react-icons/fa6";
 
 type Profile = {
   id: string;
@@ -14,6 +15,10 @@ type Profile = {
   avatar_url: string | null;
   role: string | null;
   badges: object[] | null;
+  twitch_url: string | null;
+  youtube_url: string | null;
+  x_url: string | null;
+  tiktok_url: string | null;
 };
 
 type TeamWithRole = {
@@ -38,6 +43,25 @@ function roleBadgeInfo(role: string | null | undefined): { label: string; classe
   return { label: "Player", classes: "bg-violet-500/15 border-violet-500/30 text-violet-300" };
 }
 
+const SOCIAL_DOMAINS: Record<string, string[]> = {
+  twitch_url:  ["twitch.tv", "www.twitch.tv"],
+  youtube_url: ["youtube.com", "www.youtube.com", "youtu.be"],
+  x_url:       ["x.com", "www.x.com", "twitter.com", "www.twitter.com"],
+  tiktok_url:  ["tiktok.com", "www.tiktok.com"],
+};
+
+function validateSocialUrl(field: string, url: string): string | null {
+  if (!url.trim()) return null;
+  try {
+    const parsed = new URL(url.trim());
+    if (parsed.protocol !== "https:") return "Must be an https:// link.";
+    if (!(SOCIAL_DOMAINS[field] ?? []).includes(parsed.hostname)) return "Invalid domain.";
+    return null;
+  } catch {
+    return "Invalid URL.";
+  }
+}
+
 export default function ProfilePage() {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
@@ -52,6 +76,10 @@ export default function ProfilePage() {
 
   const [editMode, setEditMode] = useState(false);
   const [activisionInput, setActivisionInput] = useState("");
+  const [twitchInput, setTwitchInput] = useState("");
+  const [youtubeInput, setYoutubeInput] = useState("");
+  const [xInput, setXInput] = useState("");
+  const [tiktokInput, setTiktokInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState("");
   const [saveError, setSaveError] = useState("");
@@ -79,7 +107,7 @@ export default function ProfilePage() {
       const [profileResult, memberResult] = await Promise.all([
         supabase
           .from("profiles")
-          .select("id, username, activision_id, created_at, avatar_url, role, badges")
+          .select("id, username, activision_id, created_at, avatar_url, role, badges, twitch_url, youtube_url, x_url, tiktok_url")
           .eq("id", user.id)
           .maybeSingle(),
         supabase
@@ -181,6 +209,10 @@ export default function ProfilePage() {
 
       setProfile(profileResult.data);
       setActivisionInput(profileResult.data.activision_id ?? "");
+      setTwitchInput(profileResult.data.twitch_url ?? "");
+      setYoutubeInput(profileResult.data.youtube_url ?? "");
+      setXInput(profileResult.data.x_url ?? "");
+      setTiktokInput(profileResult.data.tiktok_url ?? "");
       setTeams(allTeams);
       setLockReason(computedLockReason);
       setStats({ matches: totalMatches, wins: totalWins, winRate });
@@ -199,6 +231,17 @@ export default function ProfilePage() {
     setSaveError("");
     setSaveSuccess("");
 
+    const socialFields: [string, string, string][] = [
+      ["twitch_url",  "Twitch",  twitchInput],
+      ["youtube_url", "YouTube", youtubeInput],
+      ["x_url",       "X",       xInput],
+      ["tiktok_url",  "TikTok",  tiktokInput],
+    ];
+    for (const [key, label, value] of socialFields) {
+      const err = validateSocialUrl(key, value);
+      if (err) { setSaveError(`${label}: ${err}`); setSaving(false); return; }
+    }
+
     const { data: { user: freshUser } } = await supabase.auth.getUser();
     if (!freshUser) { router.push("/sign-in"); setSaving(false); return; }
     if (freshUser.id !== profile.id) { setSaveError("Session mismatch. Please sign in again."); setSaving(false); return; }
@@ -207,7 +250,13 @@ export default function ProfilePage() {
 
     const { error } = await supabase
       .from("profiles")
-      .update({ activision_id: trimmed || null })
+      .update({
+        activision_id: trimmed || null,
+        twitch_url:    twitchInput.trim()  || null,
+        youtube_url:   youtubeInput.trim() || null,
+        x_url:         xInput.trim()       || null,
+        tiktok_url:    tiktokInput.trim()  || null,
+      })
       .eq("id", freshUser.id);
 
     if (error) {
@@ -216,7 +265,14 @@ export default function ProfilePage() {
       return;
     }
 
-    setProfile({ ...profile, activision_id: trimmed || null });
+    setProfile({
+      ...profile,
+      activision_id: trimmed || null,
+      twitch_url:    twitchInput.trim()  || null,
+      youtube_url:   youtubeInput.trim() || null,
+      x_url:         xInput.trim()       || null,
+      tiktok_url:    tiktokInput.trim()  || null,
+    });
     setSaveSuccess("Profile updated successfully.");
     setEditMode(false);
     setSaving(false);
@@ -226,6 +282,10 @@ export default function ProfilePage() {
   function handleCancelEdit() {
     setEditMode(false);
     setActivisionInput(profile?.activision_id ?? "");
+    setTwitchInput(profile?.twitch_url ?? "");
+    setYoutubeInput(profile?.youtube_url ?? "");
+    setXInput(profile?.x_url ?? "");
+    setTiktokInput(profile?.tiktok_url ?? "");
     setSaveError("");
   }
 
@@ -554,8 +614,32 @@ export default function ProfilePage() {
                     value={activisionInput}
                     onChange={(e) => setActivisionInput(e.target.value)}
                     autoFocus
+                    placeholder="YourName#1234"
                     className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors duration-200"
                   />
+
+                  <div className="pt-3 border-t border-white/8 space-y-2">
+                    <p className="text-xs text-gray-500 font-medium">Social Links <span className="text-gray-700">— https:// only</span></p>
+                    {([
+                      { key: "twitch",  icon: <FaTwitch  className="w-3.5 h-3.5 text-purple-400" />, label: "Twitch",  value: twitchInput,  set: setTwitchInput,  placeholder: "https://twitch.tv/yourname"      },
+                      { key: "youtube", icon: <FaYoutube  className="w-3.5 h-3.5 text-red-400"    />, label: "YouTube", value: youtubeInput, set: setYoutubeInput, placeholder: "https://youtube.com/@yourchannel"  },
+                      { key: "x",       icon: <FaXTwitter className="w-3.5 h-3.5 text-white"      />, label: "X",       value: xInput,       set: setXInput,       placeholder: "https://x.com/yourhandle"        },
+                      { key: "tiktok",  icon: <FaTiktok   className="w-3.5 h-3.5 text-cyan-400"   />, label: "TikTok",  value: tiktokInput,  set: setTiktokInput,  placeholder: "https://tiktok.com/@yourname"    },
+                    ] as { key: string; icon: React.ReactNode; label: string; value: string; set: (v: string) => void; placeholder: string }[]).map(({ key, icon, label, value, set, placeholder }) => (
+                      <div key={key} className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center shrink-0">{icon}</div>
+                        <input
+                          type="url"
+                          value={value}
+                          onChange={(e) => set(e.target.value)}
+                          placeholder={placeholder}
+                          aria-label={label}
+                          className="flex-1 px-3 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-sm placeholder:text-gray-600 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors duration-200"
+                        />
+                      </div>
+                    ))}
+                  </div>
+
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
