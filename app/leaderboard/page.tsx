@@ -12,17 +12,15 @@ function isSafeImageUrl(url: string | null | undefined): boolean {
   try { return new URL(url).protocol === "https:"; } catch { return false; }
 }
 
-type TeamStanding = {
-  team_id: string;
+type TeamRow = {
+  id: string;
+  team_name: string;
+  team_tag: string;
+  logo_url: string | null;
+  badges: object[] | null;
   points: number;
   wins: number;
   losses: number;
-  teams: {
-    team_name: string;
-    team_tag: string;
-    logo_url: string | null;
-    badges: object[] | null;
-  } | null;
 };
 
 type PlayerStat = {
@@ -42,7 +40,7 @@ export default function LeaderboardPage() {
 
   const [username, setUsername] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("teams");
-  const [teamStandings, setTeamStandings] = useState<TeamStanding[]>([]);
+  const [teamStandings, setTeamStandings] = useState<TeamRow[]>([]);
   const [players, setPlayers] = useState<PlayerStat[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -58,28 +56,30 @@ export default function LeaderboardPage() {
         .maybeSingle();
       setUsername(profile?.username ?? null);
 
-      // Team standings — جيب من كل المواسم مجمعة
-      const { data: standings } = await supabase
-        .from("season_standings")
-        .select("team_id, points, wins, losses, teams(team_name, team_tag, logo_url, badges)");
+      // Fetch all teams + standings separately so teams with zero points still appear
+      const [{ data: allTeams }, { data: allStandings }] = await Promise.all([
+        supabase.from("teams").select("id, team_name, team_tag, logo_url, badges"),
+        supabase.from("season_standings").select("team_id, points, wins, losses"),
+      ]);
 
-      const teamMap: Record<string, TeamStanding> = {};
-      ((standings ?? []) as unknown as TeamStanding[]).forEach((s) => {
-        if (!teamMap[s.team_id]) {
-          teamMap[s.team_id] = {
-            team_id: s.team_id,
-            points: 0,
-            wins: 0,
-            losses: 0,
-            teams: s.teams,
-          };
-        }
-        teamMap[s.team_id].points += s.points;
-        teamMap[s.team_id].wins += s.wins;
-        teamMap[s.team_id].losses += s.losses;
+      type RawStanding = { team_id: string; points: number; wins: number; losses: number };
+      const standingsMap: Record<string, { points: number; wins: number; losses: number }> = {};
+      ((allStandings ?? []) as RawStanding[]).forEach((s) => {
+        if (!standingsMap[s.team_id]) standingsMap[s.team_id] = { points: 0, wins: 0, losses: 0 };
+        standingsMap[s.team_id].points += s.points;
+        standingsMap[s.team_id].wins   += s.wins;
+        standingsMap[s.team_id].losses += s.losses;
       });
 
-      const sortedTeams = Object.values(teamMap).sort((a, b) => b.points - a.points);
+      type RawTeam = { id: string; team_name: string; team_tag: string; logo_url: string | null; badges: object[] | null };
+      const sortedTeams: TeamRow[] = ((allTeams ?? []) as RawTeam[])
+        .map((t) => ({
+          ...t,
+          points: standingsMap[t.id]?.points ?? 0,
+          wins:   standingsMap[t.id]?.wins   ?? 0,
+          losses: standingsMap[t.id]?.losses ?? 0,
+        }))
+        .sort((a, b) => b.points - a.points);
       setTeamStandings(sortedTeams);
 
       // Players — كل اللاعبين من الـ profiles
@@ -180,18 +180,18 @@ export default function LeaderboardPage() {
                 </div>
 
                 {teamStandings.map((s, index) => (
-                  <Link key={s.team_id} href={`/teams/${s.team_id}`} className={`flex items-center gap-3 px-4 py-3 rounded-xl border hover:brightness-125 transition-all duration-150 ${rankBg(index)}`}>
+                  <Link key={s.id} href={`/teams/${s.id}`} className={`flex items-center gap-3 px-4 py-3 rounded-xl border hover:brightness-125 transition-all duration-150 ${rankBg(index)}`}>
                     <span className={`text-xs font-bold w-5 ${rankColor(index)}`}>{index + 1}</span>
                     <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500/20 to-indigo-600/20 border border-violet-500/20 flex items-center justify-center shrink-0">
-                      {isSafeImageUrl(s.teams?.logo_url) ? (
-                        <img src={s.teams!.logo_url!} alt={s.teams!.team_name} className="w-full h-full object-cover rounded-lg" />
+                      {isSafeImageUrl(s.logo_url) ? (
+                        <img src={s.logo_url!} alt={s.team_name} className="w-full h-full object-cover rounded-lg" />
                       ) : (
-                        <span className="text-xs font-bold text-violet-300">{s.teams?.team_tag ?? "?"}</span>
+                        <span className="text-xs font-bold text-violet-300">{s.team_tag}</span>
                       )}
                     </div>
                     <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                      <span className="text-sm font-medium text-white truncate">{s.teams?.team_name ?? "Unknown"}</span>
-                      <BadgeList badges={s.teams?.badges} />
+                      <span className="text-sm font-medium text-white truncate">{s.team_name}</span>
+                      <BadgeList badges={s.badges} />
                     </div>
                     <span className="w-12 text-center text-sm text-green-400">{s.wins}</span>
                     <span className="w-12 text-center text-sm text-red-400">{s.losses}</span>

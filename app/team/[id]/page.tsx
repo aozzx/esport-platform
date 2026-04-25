@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import Navbar from "@/components/Navbar";
@@ -52,6 +52,10 @@ export default function TeamPage() {
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [removeError, setRemoveError] = useState("");
 
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [logoError, setLogoError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -101,6 +105,44 @@ export default function TeamPage() {
     load();
     return () => { cancelled = true; };
   }, [teamId, supabase, router]);
+
+  async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setLogoError("Only image files are allowed.");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setLogoError("Image must be under 2 MB.");
+      return;
+    }
+    setLogoUploading(true);
+    setLogoError("");
+    const ext = file.name.split(".").pop() ?? "png";
+    const path = `${teamId}/logo.${ext}`;
+    const { error: uploadError } = await supabase.storage
+      .from("team-logos")
+      .upload(path, file, { upsert: true, contentType: file.type });
+    if (uploadError) {
+      setLogoError("Upload failed. Please try again.");
+      setLogoUploading(false);
+      return;
+    }
+    const { data: { publicUrl } } = supabase.storage.from("team-logos").getPublicUrl(path);
+    const { error: updateError } = await supabase
+      .from("teams")
+      .update({ logo_url: publicUrl })
+      .eq("id", teamId);
+    if (updateError) {
+      setLogoError("Failed to save logo. Please try again.");
+      setLogoUploading(false);
+      return;
+    }
+    setTeam((prev) => prev ? { ...prev, logo_url: publicUrl } : prev);
+    setLogoUploading(false);
+    e.target.value = "";
+  }
 
   async function handleInvite(e: React.SyntheticEvent) {
     e.preventDefault();
@@ -272,12 +314,37 @@ export default function TeamPage() {
         <div className="relative rounded-2xl border border-white/10 bg-white/5 p-6 overflow-hidden">
           <div className="absolute -top-16 -left-16 w-64 h-64 bg-violet-600/10 rounded-full blur-3xl pointer-events-none" />
           <div className="relative flex items-center gap-5">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500/20 to-indigo-600/20 border border-violet-500/20 flex items-center justify-center shrink-0 overflow-hidden">
+            <div
+              className={`relative w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500/20 to-indigo-600/20 border border-violet-500/20 flex items-center justify-center shrink-0 overflow-hidden${isCaptain ? " cursor-pointer group/logo" : ""}`}
+              onClick={isCaptain ? () => fileInputRef.current?.click() : undefined}
+              title={isCaptain ? "Click to upload logo" : undefined}
+            >
               {isSafeImageUrl(team.logo_url) ? (
                 <img src={team.logo_url!} alt={team.team_name} className="w-full h-full object-cover" />
               ) : (
                 <span className="text-lg font-extrabold text-violet-300 tracking-wider">{team.team_tag}</span>
               )}
+              {isCaptain && (
+                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/logo:opacity-100 transition-opacity duration-150 flex items-center justify-center">
+                  {logoUploading ? (
+                    <svg className="w-5 h-5 animate-spin text-white" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  ) : (
+                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                    </svg>
+                  )}
+                </div>
+              )}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleLogoUpload}
+              />
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
@@ -296,6 +363,15 @@ export default function TeamPage() {
             </div>
           </div>
         </div>
+
+        {logoError && (
+          <div className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+            </svg>
+            {logoError}
+          </div>
+        )}
 
         {/* Members */}
         <div className="rounded-2xl border border-white/10 bg-white/5 p-6">

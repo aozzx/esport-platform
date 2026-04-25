@@ -60,7 +60,6 @@ export default function CreateTeamPage() {
   function handleTagInput(value: string) {
     const cleaned = value
       .replace(/[^a-zA-Z0-9]/g, "")
-      .toUpperCase()
       .slice(0, 5);
     setTeamTag(cleaned);
   }
@@ -261,7 +260,7 @@ export default function CreateTeamPage() {
                   className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm font-mono tracking-widest focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors duration-200"
                 />
                 <div className="flex items-center justify-between">
-                  <p className="text-xs text-gray-600">Auto-converted to uppercase</p>
+                  <p className="text-xs text-gray-600">Saved exactly as typed</p>
                   <p className="text-xs text-gray-600">{teamTag.length}/5</p>
                 </div>
               </div>
