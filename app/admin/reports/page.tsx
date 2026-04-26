@@ -127,12 +127,39 @@ export default function AdminReportsPage() {
     const isExpanded = expandedId === reportId;
     setExpandedId(isExpanded ? null : reportId);
     if (!isExpanded && replies[reportId] === undefined) {
-      const { data } = await supabase
+      const { data: repliesData } = await supabase
         .from("report_replies")
-        .select("id, report_id, user_id, body, created_at, profiles(username, role)")
+        .select("id, report_id, user_id, body, created_at")
         .eq("report_id", reportId)
         .order("created_at", { ascending: true });
-      setReplies((prev) => ({ ...prev, [reportId]: (data ?? []) as unknown as Reply[] }));
+
+      if (!repliesData || repliesData.length === 0) {
+        setReplies((prev) => ({ ...prev, [reportId]: [] }));
+        return;
+      }
+
+      // report_replies.user_id → auth.users; profiles.id → auth.users
+      // No direct FK to profiles so we do a manual join
+      const userIds = [...new Set(repliesData.map((r) => r.user_id))];
+      const { data: profilesData } = await supabase
+        .from("profiles")
+        .select("id, username, role")
+        .in("id", userIds);
+
+      const profileMap = Object.fromEntries(
+        (profilesData ?? []).map((p) => [p.id, { username: p.username as string, role: p.role as string }])
+      );
+
+      const merged: Reply[] = repliesData.map((r) => ({
+        id: r.id as string,
+        report_id: r.report_id as string,
+        user_id: r.user_id as string,
+        body: r.body as string,
+        created_at: r.created_at as string,
+        profiles: profileMap[r.user_id as string] ?? null,
+      }));
+
+      setReplies((prev) => ({ ...prev, [reportId]: merged }));
     }
   }
 
