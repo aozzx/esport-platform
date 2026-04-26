@@ -226,17 +226,17 @@ export default function TournamentDetailPage() {
       return;
     }
 
-    const { data: regRow, error } = await supabase
+    const regId = crypto.randomUUID();
+    const { error } = await supabase
       .from("tournament_registrations")
       .insert({
+        id: regId,
         tournament_id: tournamentId,
         team_id: selectedTeamId,
         status: "pending",
-      })
-      .select("id")
-      .single();
+      });
 
-    if (error || !regRow) {
+    if (error) {
       setRegisterError("Failed to register. Please try again.");
       setRegistering(false);
       return;
@@ -246,7 +246,7 @@ export default function TournamentDetailPage() {
       .from("tournament_roster")
       .insert(
         selectedMemberIds.map((userId) => ({
-          registration_id: regRow.id,
+          registration_id: regId,
           tournament_id: tournamentId,
           user_id: userId,
         }))
@@ -261,7 +261,7 @@ export default function TournamentDetailPage() {
     const registeredTeam = userTeams.find((t) => t.id === selectedTeamId);
     if (registeredTeam) {
       setRegistrations((prev) => [...prev, {
-        id: crypto.randomUUID(),
+        id: regId,
         team_id: selectedTeamId,
         status: "pending",
         registered_at: new Date().toISOString(),
