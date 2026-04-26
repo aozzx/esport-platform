@@ -80,38 +80,21 @@ export default function InvitesPage() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.push("/sign-in"); return; }
 
-    const { data: existing } = await supabase
-      .from("team_members")
-      .select("user_id")
-      .eq("team_id", invite.team_id)
-      .eq("user_id", user.id)
-      .maybeSingle();
+    const { error } = await supabase.rpc("accept_team_invite", {
+      p_invite_id: invite.id,
+    });
 
-    if (existing) {
-      setActionError("You are already a member of this team.");
+    if (error) {
+      setActionError(
+        error.message?.includes("already_a_member")
+          ? "You are already a member of this team."
+          : error.message?.includes("invite_not_found_or_already_used")
+          ? "This invite is no longer valid."
+          : "Failed to accept invite. Please try again."
+      );
       setActingOn(null);
       return;
     }
-
-    const { error: memberError } = await supabase
-      .from("team_members")
-      .insert({
-        team_id: invite.team_id,
-        user_id: user.id,
-        role: "member",
-      });
-
-    if (memberError) {
-      setActionError("Failed to accept invite. Please try again.");
-      setActingOn(null);
-      return;
-    }
-
-    await supabase
-      .from("team_invitations")
-      .update({ status: "accepted", responded_at: new Date().toISOString() })
-      .eq("id", invite.id)
-      .eq("user_id", user.id);
 
     setInvites((prev) => prev.filter((i) => i.id !== invite.id));
     setActingOn(null);
