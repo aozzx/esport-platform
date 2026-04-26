@@ -19,6 +19,7 @@ const links = [
 export default function Navbar({ username }: Props) {
   const supabase = useMemo(() => createClient(), []);
   const [role, setRole] = useState<string | null>(null);
+  const [pendingCount, setPendingCount] = useState(0);
 
   useEffect(() => {
     if (!username) return;
@@ -34,6 +35,27 @@ export default function Navbar({ username }: Props) {
     }
     loadRole();
   }, [supabase, username]);
+
+  useEffect(() => {
+    if (role !== "admin" && role !== "owner") return;
+
+    async function loadCount() {
+      const { count } = await supabase
+        .from("reports")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "pending");
+      setPendingCount(count ?? 0);
+    }
+
+    loadCount();
+
+    const channel = supabase
+      .channel("navbar-pending-reports")
+      .on("postgres_changes", { event: "*", schema: "public", table: "reports" }, loadCount)
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [supabase, role]);
 
   return (
     <>
@@ -73,7 +95,14 @@ export default function Navbar({ username }: Props) {
               href="/admin/reports"
               className="relative text-sm text-violet-400 hover:text-violet-300 transition-colors duration-200 after:absolute after:-bottom-1 after:left-0 after:right-0 after:h-px after:rounded-full after:bg-violet-400 after:scale-x-0 hover:after:scale-x-100 after:transition-transform after:duration-200"
             >
-              Reports
+              <span className="relative">
+                Reports
+                {pendingCount > 0 && (
+                  <span className="absolute -top-2.5 -right-5 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white px-1 leading-none">
+                    {pendingCount > 99 ? "99+" : pendingCount}
+                  </span>
+                )}
+              </span>
             </a>
           )}
           {role === "owner" && (

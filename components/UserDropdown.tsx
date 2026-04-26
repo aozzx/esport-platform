@@ -43,6 +43,7 @@ export default function UserDropdown({ username, role }: Props) {
     { label: "Profile", href: "/profile" },
     { label: "Teams", href: "/teams" },
     { label: "Invites", href: "/invites" },
+    { label: "My Reports", href: "/my-reports" },
     { label: "Settings", href: "/settings" },
   ];
 

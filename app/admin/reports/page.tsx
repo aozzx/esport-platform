@@ -16,6 +16,15 @@ type Report = {
   profiles: { username: string } | null;
 };
 
+type Reply = {
+  id: string;
+  report_id: string;
+  user_id: string;
+  body: string;
+  created_at: string;
+  profiles: { username: string; role: string } | null;
+};
+
 type TypeFilter = "all" | "complaint" | "suggestion";
 type StatusFilter = "all" | "pending" | "under_review" | "resolved";
 
@@ -28,11 +37,15 @@ export default function AdminReportsPage() {
   const [username, setUsername] = useState<string | null>(null);
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
+  const [userRole, setUserRole] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [updatingToStatus, setUpdatingToStatus] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+  const [replies, setReplies] = useState<Record<string, Reply[]>>({});
+  const [replyBodies, setReplyBodies] = useState<Record<string, string>>({});
+  const [postingReplyFor, setPostingReplyFor] = useState<string | null>(null);
 
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -62,6 +75,7 @@ export default function AdminReportsPage() {
 
       if (cancelled) return;
       setUsername(profile.username);
+      setUserRole(profile.role);
       setReports((data ?? []) as unknown as Report[]);
       setLoading(false);
     }
@@ -107,6 +121,43 @@ export default function AdminReportsPage() {
 
     setUpdatingId(null);
     setUpdatingToStatus(null);
+  }
+
+  async function handleExpand(reportId: string) {
+    const isExpanded = expandedId === reportId;
+    setExpandedId(isExpanded ? null : reportId);
+    if (!isExpanded && replies[reportId] === undefined) {
+      const { data } = await supabase
+        .from("report_replies")
+        .select("id, report_id, user_id, body, created_at, profiles(username, role)")
+        .eq("report_id", reportId)
+        .order("created_at", { ascending: true });
+      setReplies((prev) => ({ ...prev, [reportId]: (data ?? []) as unknown as Reply[] }));
+    }
+  }
+
+  async function handleReply(reportId: string) {
+    const body = replyBodies[reportId]?.trim();
+    if (!body) return;
+    setPostingReplyFor(reportId);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { router.push("/sign-in"); setPostingReplyFor(null); return; }
+    const { data: newReply, error } = await supabase
+      .from("report_replies")
+      .insert({ report_id: reportId, user_id: user.id, body })
+      .select("id, report_id, user_id, body, created_at, profiles(username, role)")
+      .single();
+    if (error) {
+      showError("Failed to post reply.");
+      setPostingReplyFor(null);
+      return;
+    }
+    setReplies((prev) => ({
+      ...prev,
+      [reportId]: [...(prev[reportId] ?? []), newReply as unknown as Reply],
+    }));
+    setReplyBodies((prev) => ({ ...prev, [reportId]: "" }));
+    setPostingReplyFor(null);
   }
 
   function showSuccess(msg: string) {
@@ -310,7 +361,7 @@ export default function AdminReportsPage() {
 
                         {/* Expand toggle */}
                         <button
-                          onClick={() => setExpandedId(isExpanded ? null : report.id)}
+                          onClick={() => handleExpand(report.id)}
                           className="flex items-center justify-center w-7 h-7 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-gray-500 hover:text-gray-300 transition-all duration-200"
                         >
                           <svg
@@ -342,6 +393,53 @@ export default function AdminReportsPage() {
                             View Evidence
                           </a>
                         )}
+
+                        {/* Reply thread */}
+                        {(replies[report.id] ?? []).length > 0 && (
+                          <div className="space-y-2 border-t border-white/8 pt-3">
+                            {(replies[report.id] ?? []).map((reply) => {
+                              const isAdminReply = reply.profiles?.role === "admin" || reply.profiles?.role === "owner";
+                              return (
+                                <div key={reply.id} className={`flex ${isAdminReply ? "" : "justify-end"}`}>
+                                  <div className={`max-w-[85%] rounded-xl px-3 py-2.5 text-sm ${isAdminReply ? "bg-violet-500/10 border border-violet-500/20" : "bg-white/5 border border-white/10"}`}>
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <span className="text-xs font-semibold text-white">{reply.profiles?.username ?? "Unknown"}</span>
+                                      {isAdminReply && (
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-500/20 text-violet-400 border border-violet-500/30">Admin</span>
+                                      )}
+                                      <span className="text-[10px] text-gray-600">{fmtDate(reply.created_at)}</span>
+                                    </div>
+                                    <p className="text-gray-300 leading-relaxed whitespace-pre-wrap">{reply.body}</p>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Admin reply input */}
+                        <div className="flex gap-2 pt-1">
+                          <textarea
+                            value={replyBodies[report.id] ?? ""}
+                            onChange={(e) => setReplyBodies((prev) => ({ ...prev, [report.id]: e.target.value }))}
+                            placeholder="Write a reply..."
+                            rows={2}
+                            maxLength={2000}
+                            className="flex-1 px-3 py-2 rounded-xl bg-white/5 border border-white/10 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 resize-none transition-colors duration-200"
+                          />
+                          <button
+                            onClick={() => handleReply(report.id)}
+                            disabled={!replyBodies[report.id]?.trim() || postingReplyFor === report.id}
+                            className="self-end px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-all duration-200"
+                          >
+                            {postingReplyFor === report.id ? (
+                              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                              </svg>
+                            ) : "Reply"}
+                          </button>
+                        </div>
                       </div>
                     )}
 
