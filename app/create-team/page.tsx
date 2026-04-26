@@ -92,11 +92,13 @@ export default function CreateTeamPage() {
     }
 
     // Check team_tag uniqueness
-    const { data: existingTag } = await supabase
+    const { data: existingTag, error: tagCheckError } = await supabase
       .from("teams")
       .select("id")
       .ilike("team_tag", teamTag.trim())
       .maybeSingle();
+
+    console.log("[create-team] tag check:", { existingTag, tagCheckError, tag: teamTag.trim() });
 
     if (existingTag) {
       setError("A team with this tag already exists.");
@@ -130,15 +132,16 @@ export default function CreateTeamPage() {
       });
 
     if (teamInsertError) {
+      console.error("[create-team] insert error:", teamInsertError.code, teamInsertError.message, teamInsertError.details, teamInsertError.hint);
       const msg = teamInsertError.message.toLowerCase();
       if (msg.includes("team_name") || msg.includes("uq_teams_team_name")) {
         setError("A team with this name already exists.");
-      } else if (msg.includes("team_tag") || msg.includes("uq_teams_team_tag")) {
+      } else if (msg.includes("team_tag") || msg.includes("uq_teams_team_tag") || msg.includes("uq_teams_team_tag_ci")) {
         setError("A team with this tag already exists.");
       } else if (msg.includes("unique")) {
         setError("Team name or tag is already taken.");
       } else {
-        setError("Failed to create team. Please try again.");
+        setError(`Failed to create team: ${teamInsertError.message}`);
       }
       setSubmitting(false);
       return;
