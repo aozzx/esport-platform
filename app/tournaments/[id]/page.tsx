@@ -299,6 +299,13 @@ export default function TournamentDetailPage() {
     });
   }
 
+  function fmtDateTime(d: string) {
+    return new Date(d).toLocaleString("en-US", {
+      year: "numeric", month: "short", day: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
+  }
+
   const isRegistrationOpen = tournament?.status === "open";
   const isFull = registrations.length >= (tournament?.max_teams ?? 0);
   const eligibleTeams = userTeams.filter((t) => !registrations.some((r) => r.team_id === t.id));
@@ -372,7 +379,7 @@ export default function TournamentDetailPage() {
                   )}
                 </div>
                 {tournament.start_date && (
-                  <p className="text-xs text-gray-500 mt-2">Starts {fmtDate(tournament.start_date)}</p>
+                  <p className="text-xs text-gray-500 mt-2">Starts {fmtDateTime(tournament.start_date)}</p>
                 )}
               </div>
 
