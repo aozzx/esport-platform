@@ -212,18 +212,6 @@ export default function TeamPage() {
     const { data: { user: freshUser } } = await supabase.auth.getUser();
     if (!freshUser) { router.push("/sign-in"); setInviting(false); return; }
 
-    const { data: freshTeam } = await supabase
-      .from("teams")
-      .select("captain_id")
-      .eq("id", teamId)
-      .maybeSingle();
-
-    if (freshTeam?.captain_id !== freshUser.id) {
-      setInviteError("You are no longer the team captain.");
-      setInviting(false);
-      return;
-    }
-
     const { error } = await supabase.from("team_invitations").insert({
       team_id: teamId,
       user_id: targetProfile.id,
