@@ -214,12 +214,11 @@ export default function TeamPage() {
 
     const { data: freshTeam } = await supabase
       .from("teams")
-      .select("id")
+      .select("captain_id")
       .eq("id", teamId)
-      .eq("captain_id", freshUser.id)
       .maybeSingle();
 
-    if (!freshTeam) {
+    if (freshTeam?.captain_id !== freshUser.id) {
       setInviteError("You are no longer the team captain.");
       setInviting(false);
       return;
