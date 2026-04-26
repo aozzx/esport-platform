@@ -16,6 +16,8 @@ export default function NewTournamentPage() {
   const [name, setName] = useState("");
   const [game, setGame] = useState("");
   const [format, setFormat] = useState("single_elimination");
+  const [teamSize, setTeamSize] = useState("5v5");
+  const [gameMode, setGameMode] = useState("Search and Destroy");
   const [maxTeams, setMaxTeams] = useState("8");
   const [prizePool, setPrizePool] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -70,6 +72,8 @@ export default function NewTournamentPage() {
         name: name.trim(),
         game: game.trim(),
         format,
+        team_size: teamSize,
+        game_mode: gameMode,
         max_teams: Number(maxTeams),
         prize_pool: prizePool.trim() || null,
         start_date: startDate || null,
@@ -168,6 +172,32 @@ export default function NewTournamentPage() {
                   <option value="double_elimination">Double Elimination</option>
                   <option value="round_robin">Round Robin</option>
                 </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-medium text-gray-300">Team Size</label>
+                  <select
+                    value={teamSize}
+                    onChange={(e) => setTeamSize(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl bg-gray-900 border border-white/10 text-white text-sm focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors duration-200"
+                  >
+                    {["1v1", "2v2", "4v4", "5v5", "6v6"].map((s) => (
+                      <option key={s} value={s}>{s}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-medium text-gray-300">Game Mode</label>
+                  <select
+                    value={gameMode}
+                    onChange={(e) => setGameMode(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl bg-gray-900 border border-white/10 text-white text-sm focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors duration-200"
+                  >
+                    <option value="Search and Destroy">Search and Destroy</option>
+                    <option value="CDL">CDL</option>
+                  </select>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">

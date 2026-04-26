@@ -12,7 +12,6 @@ export default function CreateTeamPage() {
   const [username, setUsername] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [loadingUser, setLoadingUser] = useState(true);
-  const [captainError, setCaptainError] = useState(false);
 
   const [teamName, setTeamName] = useState("");
   const [teamTag, setTeamTag] = useState("");
@@ -40,16 +39,6 @@ export default function CreateTeamPage() {
         .maybeSingle();
 
       setUsername(profile?.username ?? null);
-
-      const { data: existingTeam } = await supabase
-        .from("teams")
-        .select("id")
-        .eq("captain_id", user.id)
-        .maybeSingle();
-
-      if (existingTeam) {
-        setCaptainError(true);
-      }
 
       setLoadingUser(false);
     }
@@ -208,17 +197,6 @@ export default function CreateTeamPage() {
             </p>
           </div>
 
-          {captainError ? (
-            <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-8 text-center space-y-4">
-              <p className="text-red-400 font-semibold">You are already a captain of a team.</p>
-              <a
-                href="/teams"
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 text-sm text-gray-300 hover:text-white transition-all duration-200"
-              >
-                Back to Teams
-              </a>
-            </div>
-          ) : (
           <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-sm p-8">
             <form onSubmit={handleSubmit} className="space-y-5" noValidate>
 
@@ -304,7 +282,6 @@ export default function CreateTeamPage() {
 
             </form>
           </div>
-          )}
 
           <p className="text-center text-sm text-gray-600 mt-6">
             Changed your mind?{" "}

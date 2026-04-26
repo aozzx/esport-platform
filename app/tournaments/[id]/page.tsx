@@ -21,6 +21,13 @@ type Tournament = {
   start_date: string | null;
   description: string | null;
   banner_url: string | null;
+  team_size: string | null;
+  game_mode: string | null;
+};
+
+type TeamMember = {
+  user_id: string;
+  profiles: { username: string; activision_id: string | null } | null;
 };
 
 type Registration = {
@@ -59,6 +66,9 @@ export default function TournamentDetailPage() {
   const [registerError, setRegisterError] = useState("");
   const [registerSuccess, setRegisterSuccess] = useState("");
   const [selectedTeamId, setSelectedTeamId] = useState("");
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [teamMembersLoading, setTeamMembersLoading] = useState(false);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,7 +86,7 @@ export default function TournamentDetailPage() {
           .maybeSingle(),
         supabase
           .from("tournaments")
-          .select("id, name, game, format, status, max_teams, prize_pool, start_date, description, banner_url")
+          .select("id, name, game, format, status, max_teams, prize_pool, start_date, description, banner_url, team_size, game_mode")
           .eq("id", tournamentId)
           .maybeSingle(),
       ]);
@@ -114,10 +124,10 @@ export default function TournamentDetailPage() {
       setRegistrations((regsResult.data ?? []) as unknown as Registration[]);
 
       const captainTeams = captainResult.data ?? [];
+      const registeredIds = new Set((regsResult.data ?? []).map((r: { team_id: string }) => r.team_id));
       setUserTeams(captainTeams);
-      if (captainTeams.length > 0) {
-        setSelectedTeamId(captainTeams[0].id);
-      }
+      const firstEligible = captainTeams.find((t) => !registeredIds.has(t.id));
+      if (firstEligible) setSelectedTeamId(firstEligible.id);
 
       setLoading(false);
     }
@@ -125,6 +135,29 @@ export default function TournamentDetailPage() {
     load();
     return () => { cancelled = true; };
   }, [tournamentId, supabase, router]);
+
+  function teamSizeNumber(ts: string | null | undefined): number {
+    if (!ts) return 5;
+    const n = parseInt(ts.split("v")[0], 10);
+    return isNaN(n) ? 5 : n;
+  }
+
+  useEffect(() => {
+    if (!selectedTeamId) return;
+    let cancelled = false;
+    setTeamMembersLoading(true);
+    setSelectedMemberIds([]);
+    supabase
+      .from("team_members")
+      .select("user_id, profiles(username, activision_id)")
+      .eq("team_id", selectedTeamId)
+      .then(({ data }) => {
+        if (cancelled) return;
+        setTeamMembers((data ?? []) as unknown as TeamMember[]);
+        setTeamMembersLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [selectedTeamId, supabase]);
 
   async function handleRegister() {
     setRegisterError("");
@@ -135,26 +168,20 @@ export default function TournamentDetailPage() {
       return;
     }
 
-    setRegistering(true);
+    const required = teamSizeNumber(tournament?.team_size);
 
-    const { data: members } = await supabase
-      .from("team_members")
-      .select("user_id, profiles(username, activision_id)")
-      .eq("team_id", selectedTeamId);
-
-    if ((members ?? []).length < 4) {
-      setRegisterError(`Your team needs at least 4 members. Currently: ${(members ?? []).length}`);
-      setRegistering(false);
+    if (selectedMemberIds.length !== required) {
+      setRegisterError(`Please select exactly ${required} player${required !== 1 ? "s" : ""} for this tournament.`);
       return;
     }
 
-    type MemberCheck = { user_id: string; profiles: { username: string; activision_id: string | null } | null };
-    const memberList = (members ?? []) as unknown as MemberCheck[];
-    const missingActivision = memberList.filter((m) => !m.profiles?.activision_id);
+    setRegistering(true);
 
+    const selectedMembers = teamMembers.filter((m) => selectedMemberIds.includes(m.user_id));
+    const missingActivision = selectedMembers.filter((m) => !m.profiles?.activision_id);
     if (missingActivision.length > 0) {
       const names = missingActivision.map((m) => m.profiles?.username ?? "Unknown").join(", ");
-      setRegisterError(`These members don't have an Activision ID: ${names}`);
+      setRegisterError(`These selected players don't have an Activision ID: ${names}`);
       setRegistering(false);
       return;
     }
@@ -166,27 +193,20 @@ export default function TournamentDetailPage() {
       return;
     }
 
-    const myUserIds = memberList.map((m) => m.user_id);
-    const otherTeamIds = registrations
-      .filter((r) => r.team_id !== selectedTeamId)
-      .map((r) => r.team_id);
-
-    if (otherTeamIds.length > 0) {
-      const { data: otherMembers } = await supabase
-        .from("team_members")
-        .select("user_id")
-        .in("team_id", otherTeamIds);
-
-      const otherUserIds = new Set((otherMembers ?? []).map((m: { user_id: string }) => m.user_id));
-      if (myUserIds.some((uid) => otherUserIds.has(uid))) {
-        setRegisterError("One or more players are already registered in this tournament with another team.");
-        setRegistering(false);
-        return;
-      }
-    }
-
     if (registrations.length >= (tournament?.max_teams ?? 0)) {
       setRegisterError("Tournament is full.");
+      setRegistering(false);
+      return;
+    }
+
+    const { data: rosterConflicts } = await supabase
+      .from("tournament_roster")
+      .select("user_id")
+      .eq("tournament_id", tournamentId)
+      .in("user_id", selectedMemberIds);
+
+    if ((rosterConflicts ?? []).length > 0) {
+      setRegisterError("One or more selected players are already registered in this tournament with another team.");
       setRegistering(false);
       return;
     }
@@ -196,31 +216,44 @@ export default function TournamentDetailPage() {
 
     const { data: freshTeam } = await supabase
       .from("teams")
-      .select("id")
+      .select("captain_id")
       .eq("id", selectedTeamId)
-      .eq("captain_id", freshUser.id)
       .maybeSingle();
 
-    if (!freshTeam) {
+    if (freshTeam?.captain_id !== freshUser.id) {
       setRegisterError("You are no longer the captain of this team.");
       setRegistering(false);
       return;
     }
 
-    const { error } = await supabase
+    const { data: regRow, error } = await supabase
       .from("tournament_registrations")
       .insert({
         tournament_id: tournamentId,
         team_id: selectedTeamId,
         status: "pending",
-      });
+      })
+      .select("id")
+      .single();
 
-    if (error) {
-      if (error.code === "23514" || error.message?.includes("at least 4 members")) {
-        setRegisterError(error.message ?? "Your team must have at least 4 members to register.");
-      } else {
-        setRegisterError("Failed to register. Please try again.");
-      }
+    if (error || !regRow) {
+      setRegisterError("Failed to register. Please try again.");
+      setRegistering(false);
+      return;
+    }
+
+    const { error: rosterError } = await supabase
+      .from("tournament_roster")
+      .insert(
+        selectedMemberIds.map((userId) => ({
+          registration_id: regRow.id,
+          tournament_id: tournamentId,
+          user_id: userId,
+        }))
+      );
+
+    if (rosterError) {
+      setRegisterError("Registered but failed to save player roster. Please contact an admin.");
       setRegistering(false);
       return;
     }
@@ -268,7 +301,9 @@ export default function TournamentDetailPage() {
 
   const isRegistrationOpen = tournament?.status === "open";
   const isFull = registrations.length >= (tournament?.max_teams ?? 0);
-  const userTeamAlreadyRegistered = registrations.some((r) => userTeams.some((t) => t.id === r.team_id));
+  const eligibleTeams = userTeams.filter((t) => !registrations.some((r) => r.team_id === t.id));
+  const userTeamAlreadyRegistered = userTeams.length > 0 && userTeams.some((t) => registrations.some((r) => r.team_id === t.id));
+  const requiredCount = teamSizeNumber(tournament?.team_size);
 
   if (loading) {
     return (
@@ -372,12 +407,12 @@ export default function TournamentDetailPage() {
         </div>
 
         {/* Register */}
-        {isRegistrationOpen && userTeams.length > 0 && !userTeamAlreadyRegistered && !isFull && (
-          <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
-            <h2 className="text-sm font-semibold text-white mb-4">Register Your Team</h2>
+        {isRegistrationOpen && eligibleTeams.length > 0 && !isFull && (
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4">
+            <h2 className="text-sm font-semibold text-white">Register Your Team</h2>
 
             {registerError && (
-              <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm mb-4">
+              <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
                 <svg className="w-4 h-4 mt-0.5 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
                 </svg>
@@ -386,7 +421,7 @@ export default function TournamentDetailPage() {
             )}
 
             {registerSuccess && (
-              <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-green-500/10 border border-green-500/20 text-green-400 text-sm mb-4">
+              <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-green-500/10 border border-green-500/20 text-green-400 text-sm">
                 <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
@@ -394,35 +429,94 @@ export default function TournamentDetailPage() {
               </div>
             )}
 
-            <div className="flex items-center gap-3">
-              {userTeams.length > 1 ? (
-                <select
-                  value={selectedTeamId}
-                  onChange={(e) => setSelectedTeamId(e.target.value)}
-                  className="flex-1 px-4 py-2.5 rounded-xl bg-gray-900 border border-white/10 text-white text-sm focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500"
-                >
-                  {userTeams.map((t) => (
-                    <option key={t.id} value={t.id}>{t.team_name}</option>
-                  ))}
-                </select>
+            {/* Team selector */}
+            {eligibleTeams.length > 1 ? (
+              <select
+                value={selectedTeamId}
+                onChange={(e) => setSelectedTeamId(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl bg-gray-900 border border-white/10 text-white text-sm focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500"
+              >
+                {eligibleTeams.map((t) => (
+                  <option key={t.id} value={t.id}>{t.team_name}</option>
+                ))}
+              </select>
+            ) : (
+              <div className="px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-sm">
+                {eligibleTeams[0]?.team_name}
+              </div>
+            )}
+
+            {/* Member picker */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-gray-500">
+                  Select {requiredCount} player{requiredCount !== 1 ? "s" : ""} who will compete
+                </p>
+                <p className={`text-xs font-medium ${selectedMemberIds.length === requiredCount ? "text-green-400" : "text-gray-500"}`}>
+                  {selectedMemberIds.length}/{requiredCount} selected
+                </p>
+              </div>
+
+              {teamMembersLoading ? (
+                <p className="text-xs text-gray-600 italic py-2">Loading members...</p>
+              ) : teamMembers.length === 0 ? (
+                <p className="text-xs text-gray-600 italic py-2">No members found.</p>
               ) : (
-                <div className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-white text-sm">
-                  {userTeams[0].team_name}
+                <div className="space-y-1.5">
+                  {teamMembers.map((m) => {
+                    const isChecked = selectedMemberIds.includes(m.user_id);
+                    const canCheck = isChecked || selectedMemberIds.length < requiredCount;
+                    return (
+                      <label
+                        key={m.user_id}
+                        className={`flex items-center gap-3 px-3 py-2.5 rounded-xl border transition-all duration-150 ${
+                          isChecked
+                            ? "bg-violet-500/10 border-violet-500/30 cursor-pointer"
+                            : canCheck
+                            ? "bg-white/3 border-white/8 hover:bg-white/5 cursor-pointer"
+                            : "bg-white/3 border-white/8 opacity-40 cursor-not-allowed"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          disabled={!canCheck}
+                          onChange={() => {
+                            if (isChecked) {
+                              setSelectedMemberIds((prev) => prev.filter((id) => id !== m.user_id));
+                            } else if (canCheck) {
+                              setSelectedMemberIds((prev) => [...prev, m.user_id]);
+                            }
+                          }}
+                          className="w-3.5 h-3.5 rounded accent-violet-500 shrink-0"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-white truncate">{m.profiles?.username ?? "Unknown"}</p>
+                          {m.profiles?.activision_id ? (
+                            <p className="text-xs text-gray-500 truncate">{m.profiles.activision_id}</p>
+                          ) : (
+                            <p className="text-xs text-red-400/70">No Activision ID</p>
+                          )}
+                        </div>
+                      </label>
+                    );
+                  })}
                 </div>
               )}
-              <button
-                onClick={handleRegister}
-                disabled={registering}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-all duration-200"
-              >
-                {registering ? (
-                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                ) : "Register"}
-              </button>
             </div>
+
+            <button
+              onClick={handleRegister}
+              disabled={registering || selectedMemberIds.length !== requiredCount}
+              className="w-full flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-all duration-200"
+            >
+              {registering ? (
+                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              ) : `Register (${selectedMemberIds.length}/${requiredCount} selected)`}
+            </button>
           </div>
         )}
 
