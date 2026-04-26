@@ -142,19 +142,26 @@ export default function AdminReportsPage() {
     setPostingReplyFor(reportId);
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { router.push("/sign-in"); setPostingReplyFor(null); return; }
-    const { data: newReply, error } = await supabase
+    const replyId = crypto.randomUUID();
+    const { error } = await supabase
       .from("report_replies")
-      .insert({ report_id: reportId, user_id: user.id, body })
-      .select("id, report_id, user_id, body, created_at, profiles(username, role)")
-      .single();
+      .insert({ id: replyId, report_id: reportId, user_id: user.id, body });
     if (error) {
       showError("Failed to post reply.");
       setPostingReplyFor(null);
       return;
     }
+    const newReply: Reply = {
+      id: replyId,
+      report_id: reportId,
+      user_id: user.id,
+      body,
+      created_at: new Date().toISOString(),
+      profiles: { username: username ?? "Admin", role: userRole ?? "admin" },
+    };
     setReplies((prev) => ({
       ...prev,
-      [reportId]: [...(prev[reportId] ?? []), newReply as unknown as Reply],
+      [reportId]: [...(prev[reportId] ?? []), newReply],
     }));
     setReplyBodies((prev) => ({ ...prev, [reportId]: "" }));
     setPostingReplyFor(null);
