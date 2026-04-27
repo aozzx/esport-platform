@@ -71,12 +71,20 @@ export async function POST(
     .eq("tournament_id", tournamentId);
 
   if (deleteError) {
-    return NextResponse.json({ error: "Failed to clear existing bracket." }, { status: 500 });
+    console.error("[bracket/generate] delete error:", deleteError.code, deleteError.message, deleteError.details);
+    return NextResponse.json({ error: "Failed to clear existing bracket.", detail: deleteError.message }, { status: 500 });
   }
 
   // Build randomised bracket
   const teams = [...regs].sort(() => Math.random() - 0.5);
-  const newMatches = [];
+  const newMatches: {
+    tournament_id: string;
+    round: number;
+    match_number: number;
+    team_a_id: string;
+    team_b_id: string | null;
+    status: string;
+  }[] = [];
   let matchNumber = 1;
 
   for (let i = 0; i < teams.length; i += 2) {
@@ -92,7 +100,8 @@ export async function POST(
 
   const { error: insertError } = await supabase.from("matches").insert(newMatches);
   if (insertError) {
-    return NextResponse.json({ error: "Failed to create bracket." }, { status: 500 });
+    console.error("[bracket/generate] insert error:", insertError.code, insertError.message, insertError.details, insertError.hint);
+    return NextResponse.json({ error: "Failed to create bracket.", detail: insertError.message }, { status: 500 });
   }
 
   return NextResponse.json({ success: true });

@@ -31,22 +31,6 @@ function mapTeam(t: RawTeam): { team_name: string; team_tag: string } | null {
   return t ? { team_name: String(t.team_name ?? ""), team_tag: String(t.team_tag ?? "") } : null;
 }
 
-type RawMatch = {
-  id: string; round: number; match_number: number;
-  team_a_id: string | null; team_b_id: string | null; winner_id: string | null;
-  score_a: number | null; score_b: number | null; status: string;
-  team_a: RawTeam; team_b: RawTeam; winner: RawTeam;
-};
-
-function mapMatch(m: RawMatch): Match {
-  return {
-    id: m.id, round: m.round, match_number: m.match_number,
-    team_a_id: m.team_a_id, team_b_id: m.team_b_id, winner_id: m.winner_id,
-    score_a: m.score_a, score_b: m.score_b, status: m.status,
-    team_a: mapTeam(m.team_a), team_b: mapTeam(m.team_b), winner: mapTeam(m.winner),
-  };
-}
-
 type RawRegistration = { team_id: string; teams: RawTeam };
 
 function mapRegistration(r: RawRegistration): Registration {
@@ -99,19 +83,58 @@ export default function BracketPage() {
   }, [tournamentId, supabase, router]);
 
   async function refreshMatches() {
-    const { data } = await supabase
+    const { data: rawMatches } = await supabase
       .from("matches")
-      .select(`
-        id, round, match_number, team_a_id, team_b_id, winner_id, score_a, score_b, status,
-        team_a:teams!matches_team_a_id_fkey(team_name, team_tag),
-        team_b:teams!matches_team_b_id_fkey(team_name, team_tag),
-        winner:teams!matches_winner_id_fkey(team_name, team_tag)
-      `)
+      .select("id, round, match_number, team_a_id, team_b_id, winner_id, score_a, score_b, status")
       .eq("tournament_id", tournamentId)
       .order("round")
       .order("match_number");
 
-    setMatches(((data ?? []) as unknown as RawMatch[]).map(mapMatch));
+    const rows = (rawMatches ?? []) as {
+      id: string; round: number; match_number: number;
+      team_a_id: string | null; team_b_id: string | null; winner_id: string | null;
+      score_a: number | null; score_b: number | null; status: string;
+    }[];
+
+    // Collect every team ID referenced in these matches in one round-trip.
+    const teamIds = [
+      ...new Set(
+        rows
+          .flatMap((m) => [m.team_a_id, m.team_b_id, m.winner_id])
+          .filter((id): id is string => id !== null)
+      ),
+    ];
+
+    const teamMap = new Map<string, { team_name: string; team_tag: string }>();
+    if (teamIds.length > 0) {
+      const { data: teams } = await supabase
+        .from("teams")
+        .select("id, team_name, team_tag")
+        .in("id", teamIds);
+      for (const t of teams ?? []) {
+        teamMap.set(t.id as string, {
+          team_name: t.team_name as string,
+          team_tag: t.team_tag as string,
+        });
+      }
+    }
+
+    setMatches(
+      rows.map((m): Match => ({
+        id: m.id,
+        round: m.round,
+        match_number: m.match_number,
+        team_a_id: m.team_a_id,
+        team_b_id: m.team_b_id,
+        winner_id: m.winner_id,
+        score_a: m.score_a,
+        score_b: m.score_b,
+        status: m.status,
+        team_a: m.team_a_id ? (teamMap.get(m.team_a_id) ?? null) : null,
+        team_b: m.team_b_id ? (teamMap.get(m.team_b_id) ?? null) : null,
+        winner: m.winner_id ? (teamMap.get(m.winner_id) ?? null) : null,
+      }))
+    );
   }
 
   async function generateBracket() {
