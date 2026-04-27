@@ -49,7 +49,7 @@ export async function POST(
   // and to get authoritative team IDs (never trust client-supplied values for scoring)
   const { data: match, error: matchError } = await supabase
     .from("matches")
-    .select("id, tournament_id, team_a_id, team_b_id, winner_id")
+    .select("id, tournament_id, team_a_id, team_b_id, winner_id, round")
     .eq("id", matchId)
     .eq("tournament_id", tournamentId)
     .maybeSingle();
