@@ -78,7 +78,7 @@ export default function BracketPage() {
 
   // Per-match submission form state
   const [submitForms, setSubmitForms] = useState<
-    Record<string, { claimedWinner: string; scoreA: string; scoreB: string; proofUrl: string; submitting: boolean; error: string }>
+    Record<string, { claimedWinner: string; scoreA: string; scoreB: string; proofUrl: string; proofFile: File | null; uploading: boolean; submitting: boolean; error: string }>
   >({});
 
   useEffect(() => {
@@ -244,6 +244,8 @@ export default function BracketPage() {
       scoreA: "",
       scoreB: "",
       proofUrl: "",
+      proofFile: null,
+      uploading: false,
       submitting: false,
       error: "",
     };
@@ -265,6 +267,26 @@ export default function BracketPage() {
 
     setSubmitForm(match.id, { submitting: true, error: "" });
 
+    // Upload proof image to Supabase Storage if a file was selected
+    let proofUrl: string | undefined = undefined;
+    if (form.proofFile) {
+      setSubmitForm(match.id, { uploading: true });
+      const ext = form.proofFile.name.split(".").pop() ?? "jpg";
+      const path = `${match.id}/${captainTeamId}-${Date.now()}.${ext}`;
+      const { error: uploadError } = await supabase.storage
+        .from("match-proofs")
+        .upload(path, form.proofFile, { upsert: true });
+
+      if (uploadError) {
+        setSubmitForm(match.id, { submitting: false, uploading: false, error: "Failed to upload image." });
+        return;
+      }
+
+      const { data: urlData } = supabase.storage.from("match-proofs").getPublicUrl(path);
+      proofUrl = urlData.publicUrl;
+      setSubmitForm(match.id, { uploading: false });
+    }
+
     const res = await fetch(`/api/tournaments/${tournamentId}/bracket/submit-result`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -274,7 +296,7 @@ export default function BracketPage() {
         claimedWinnerId: form.claimedWinner,
         scoreA: form.scoreA ? Number(form.scoreA) : undefined,
         scoreB: form.scoreB ? Number(form.scoreB) : undefined,
-        proofUrl: form.proofUrl.trim() || undefined,
+        proofUrl,
       }),
     });
 
@@ -500,7 +522,7 @@ export default function BracketPage() {
 
                         {/* Submission status badges */}
                         {!match.winner_id && match.team_a_id && match.team_b_id && (
-                          <div className="px-5 pb-3 flex items-center gap-2 flex-wrap">
+                          <div className="px-5 pb-2 flex items-center gap-2 flex-wrap">
                             {teamASubmission ? (
                               <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-500/15 border border-violet-500/25 text-violet-400">
                                 {match.team_a?.team_tag} submitted
@@ -524,6 +546,43 @@ export default function BracketPage() {
                                 ⚠ Disputed — admin review needed
                               </span>
                             )}
+                          </div>
+                        )}
+
+                        {/* Admin: view submission details */}
+                        {isAdmin && !match.winner_id && matchSubs.length > 0 && (
+                          <div className="mx-5 mb-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 space-y-2">
+                            <p className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider">Submitted Results</p>
+                            {matchSubs.map((sub) => {
+                              const subTeam = sub.team_id === match.team_a_id ? match.team_a : match.team_b;
+                              const claimedTeam = sub.claimed_winner_id === match.team_a_id ? match.team_a : match.team_b;
+                              return (
+                                <div key={sub.team_id} className="flex items-start gap-3">
+                                  <span className="text-[10px] font-bold text-gray-400 shrink-0 mt-0.5">{subTeam?.team_tag ?? "?"}:</span>
+                                  <div className="flex-1 space-y-0.5">
+                                    <p className="text-xs text-white">
+                                      Claims <span className="font-semibold text-green-400">{claimedTeam?.team_name ?? "?"}</span> won
+                                      {(sub.score_a !== null || sub.score_b !== null) && (
+                                        <span className="text-gray-400 ml-1">({sub.score_a ?? 0} – {sub.score_b ?? 0})</span>
+                                      )}
+                                    </p>
+                                    {sub.proof_url && (
+                                      <a
+                                        href={sub.proof_url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-1 text-[10px] text-violet-400 hover:text-violet-300 transition-colors"
+                                      >
+                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                                        </svg>
+                                        View screenshot
+                                      </a>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
 
@@ -581,16 +640,29 @@ export default function BracketPage() {
                               />
                             </div>
 
-                            {/* Proof URL */}
+                            {/* Proof image upload */}
                             <div className="flex items-center gap-2">
-                              <span className="text-xs text-gray-500 shrink-0">Screenshot URL:</span>
-                              <input
-                                type="url"
-                                placeholder="https://..."
-                                value={form.proofUrl}
-                                onChange={(e) => setSubmitForm(match.id, { proofUrl: e.target.value })}
-                                className="flex-1 px-2 py-1.5 rounded-lg bg-white/5 border border-white/10 text-white text-xs placeholder-gray-600 focus:outline-none focus:border-violet-500"
-                              />
+                              <span className="text-xs text-gray-500 shrink-0">Screenshot:</span>
+                              <label className="flex items-center gap-2 cursor-pointer">
+                                <div className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-gray-300 text-xs font-medium transition-all duration-200">
+                                  {form.proofFile ? form.proofFile.name : "Choose image"}
+                                </div>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0] ?? null;
+                                    setSubmitForm(match.id, { proofFile: file });
+                                  }}
+                                />
+                              </label>
+                              {form.proofFile && (
+                                <button
+                                  onClick={() => setSubmitForm(match.id, { proofFile: null })}
+                                  className="text-gray-600 hover:text-gray-400 text-xs"
+                                >✕</button>
+                              )}
                             </div>
 
                             {form.error && (
@@ -605,10 +677,10 @@ export default function BracketPage() {
 
                             <button
                               onClick={() => handleSubmitResult(match, myTeamId)}
-                              disabled={form.submitting}
+                              disabled={form.submitting || form.uploading}
                               className="px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold transition-all duration-200"
                             >
-                              {form.submitting ? "Submitting..." : mySubmission ? "Resubmit" : "Submit Result"}
+                              {form.uploading ? "Uploading image..." : form.submitting ? "Submitting..." : mySubmission ? "Resubmit" : "Submit Result"}
                             </button>
                           </div>
                         )}
