@@ -340,15 +340,22 @@ export default function BracketPage() {
     <div className="min-h-screen bg-gray-950 text-white font-sans">
       <Navbar username={username} />
 
-      <main className="max-w-4xl mx-auto px-6 pt-28 pb-20 space-y-5">
+      {/* Tab nav — consistent with main tournament page */}
+      <div className="border-b border-white/8 bg-gray-950/80 backdrop-blur-sm sticky top-0 z-10 mt-16">
+        <div className="max-w-5xl mx-auto px-6">
+          <nav className="flex items-center gap-0 -mb-px">
+            <a href={`/tournaments/${tournamentId}`} className="px-4 py-3.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 hover:border-gray-600 transition-all duration-150">Overview</a>
+            <a href={`/tournaments/${tournamentId}`} className="px-4 py-3.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 hover:border-gray-600 transition-all duration-150">Participants</a>
+            <span className="px-4 py-3.5 text-sm font-medium border-b-2 border-violet-500 text-violet-400">Bracket</span>
+            <a href={`/tournaments/${tournamentId}/rules`} className="px-4 py-3.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 hover:border-gray-600 transition-all duration-150">Rules</a>
+          </nav>
+        </div>
+      </div>
+
+      <main className="max-w-5xl mx-auto px-6 py-6 space-y-5">
 
         <div className="flex items-center justify-between">
-          <a href={`/tournaments/${tournamentId}`} className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-300 transition-colors duration-200">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-            </svg>
-            Back to Tournament
-          </a>
+          <div>{/* spacer */}</div>
 
           {isAdmin && (
             <button
