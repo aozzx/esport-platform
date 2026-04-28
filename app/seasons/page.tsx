@@ -42,6 +42,19 @@ type SeasonQueueEntry = {
   created_at: string;
 };
 
+type SeasonMatchHistory = {
+  id: string;
+  team_a_id: string;
+  team_b_id: string;
+  team_a_result: "won" | "lost" | null;
+  team_b_result: "won" | "lost" | null;
+  status: "pending" | "confirmed" | "disputed";
+  winner_team_id: string | null;
+  created_at: string;
+  team_a: { team_name: string; team_tag: string } | null;
+  team_b: { team_name: string; team_tag: string } | null;
+};
+
 type SeasonMatch = {
   id: string;
   season_id: string;
@@ -51,6 +64,8 @@ type SeasonMatch = {
   team_b_result: "won" | "lost" | null;
   team_a_screenshot_url: string | null;
   team_b_screenshot_url: string | null;
+  team_a_screenshot_urls: string[];
+  team_b_screenshot_urls: string[];
   status: "pending" | "confirmed" | "disputed";
   winner_team_id: string | null;
   created_at: string;
@@ -72,6 +87,7 @@ export default function SeasonsPage() {
   const [standings, setStandings] = useState<Standing[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingStandings, setLoadingStandings] = useState(false);
+  const [matchHistory, setMatchHistory] = useState<SeasonMatchHistory[]>([]);
 
   // ── Captain / team state ─────────────────────────────────────────────────────
   const [captainTeamId, setCaptainTeamId] = useState<string | null>(null);
@@ -88,7 +104,7 @@ export default function SeasonsPage() {
   const [seasonMatch, setSeasonMatch] = useState<SeasonMatch | null>(null);
   const [opponentTeamName, setOpponentTeamName] = useState<string | null>(null);
   const [pendingResult, setPendingResult] = useState<"won" | "lost" | null>(null);
-  const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
+  const [screenshotFiles, setScreenshotFiles] = useState<File[]>([]);
   const [submittingResult, setSubmittingResult] = useState(false);
   const [resultError, setResultError] = useState("");
   const [mySubmittedResult, setMySubmittedResult] = useState<"won" | "lost" | null>(null);
@@ -204,7 +220,7 @@ export default function SeasonsPage() {
 
       const { data: matchData } = await supabase
         .from("season_match_results")
-        .select("id, season_id, team_a_id, team_b_id, team_a_result, team_b_result, team_a_screenshot_url, team_b_screenshot_url, status, winner_team_id, created_at")
+        .select("id, season_id, team_a_id, team_b_id, team_a_result, team_b_result, team_a_screenshot_url, team_b_screenshot_url, team_a_screenshot_urls, team_b_screenshot_urls, status, winner_team_id, created_at")
         .eq("season_id", selectedSeason.id)
         .eq("status", "pending")
         .or(`team_a_id.eq.${captainTeamId},team_b_id.eq.${captainTeamId}`)
@@ -412,12 +428,24 @@ export default function SeasonsPage() {
   // ── Standings helpers ─────────────────────────────────────────────────────────
   async function loadStandings(seasonId: string) {
     setLoadingStandings(true);
-    const { data } = await supabase
-      .from("season_standings")
-      .select("id, team_id, points, wins, losses, teams(team_name, team_tag, logo_url)")
-      .eq("season_id", seasonId)
-      .order("points", { ascending: false });
-    setStandings((data ?? []) as unknown as Standing[]);
+
+    const [standingsRes, historyRes] = await Promise.all([
+      supabase
+        .from("season_standings")
+        .select("id, team_id, points, wins, losses, teams(team_name, team_tag, logo_url)")
+        .eq("season_id", seasonId)
+        .order("points", { ascending: false }),
+      supabase
+        .from("season_match_results")
+        .select("id, team_a_id, team_b_id, team_a_result, team_b_result, status, winner_team_id, created_at, team_a:teams!season_match_results_team_a_id_fkey(team_name, team_tag), team_b:teams!season_match_results_team_b_id_fkey(team_name, team_tag)")
+        .eq("season_id", seasonId)
+        .neq("status", "pending")
+        .order("created_at", { ascending: false })
+        .limit(20),
+    ]);
+
+    setStandings((standingsRes.data ?? []) as unknown as Standing[]);
+    setMatchHistory((historyRes.data ?? []) as unknown as SeasonMatchHistory[]);
     setLoadingStandings(false);
   }
 
@@ -510,7 +538,7 @@ export default function SeasonsPage() {
 
   async function handleSubmitResult() {
     if (!seasonMatch || !captainTeamId || submittingResult || !pendingResult) return;
-    if (pendingResult === "won" && !screenshotFile) return;
+    if (pendingResult === "won" && screenshotFiles.length === 0) return;
 
     setSubmittingResult(true);
     setResultError("");
@@ -532,34 +560,45 @@ export default function SeasonsPage() {
     const freshCaptainTeamId = freshCaptainTeam.id as string;
 
     const myTeamIsA = seasonMatch.team_a_id === freshCaptainTeamId;
-    let screenshotUrl: string | null = null;
+    const uploadedUrls: string[] = [];
 
-    if (pendingResult === "won" && screenshotFile) {
-      if (screenshotFile.size > 5 * 1024 * 1024) {
-        setResultError("Screenshot must be under 5MB.");
-        setSubmittingResult(false);
-        return;
+    if (pendingResult === "won" && screenshotFiles.length > 0) {
+      for (let i = 0; i < screenshotFiles.length; i++) {
+        const file = screenshotFiles[i];
+
+        if (file.size > 5 * 1024 * 1024) {
+          setResultError(`Screenshot ${i + 1} must be under 5MB.`);
+          setSubmittingResult(false);
+          return;
+        }
+
+        const ext = file.name.split(".").pop() ?? "png";
+        const { data: uploadData, error: uploadErr } = await supabase.storage
+          .from("match-screenshots")
+          .upload(`${seasonMatch.id}/${freshCaptainTeamId}_${i}.${ext}`, file, { upsert: true });
+
+        if (uploadErr) {
+          setResultError(`Failed to upload screenshot ${i + 1}. Please try again.`);
+          setSubmittingResult(false);
+          return;
+        }
+
+        const { data: { publicUrl } } = supabase.storage
+          .from("match-screenshots")
+          .getPublicUrl(uploadData.path);
+        uploadedUrls.push(publicUrl);
       }
-
-      const { data: uploadData, error: uploadErr } = await supabase.storage
-        .from("match-screenshots")
-        .upload(`${seasonMatch.id}/${freshCaptainTeamId}.png`, screenshotFile, { upsert: true });
-
-      if (uploadErr) {
-        setResultError("Failed to upload screenshot. Please try again.");
-        setSubmittingResult(false);
-        return;
-      }
-
-      const { data: { publicUrl } } = supabase.storage
-        .from("match-screenshots")
-        .getPublicUrl(uploadData.path);
-      screenshotUrl = publicUrl;
     }
 
     const updateData = myTeamIsA
-      ? { team_a_result: pendingResult, ...(screenshotUrl ? { team_a_screenshot_url: screenshotUrl } : {}) }
-      : { team_b_result: pendingResult, ...(screenshotUrl ? { team_b_screenshot_url: screenshotUrl } : {}) };
+      ? {
+          team_a_result: pendingResult,
+          ...(uploadedUrls.length > 0 ? { team_a_screenshot_url: uploadedUrls[0], team_a_screenshot_urls: uploadedUrls } : {}),
+        }
+      : {
+          team_b_result: pendingResult,
+          ...(uploadedUrls.length > 0 ? { team_b_screenshot_url: uploadedUrls[0], team_b_screenshot_urls: uploadedUrls } : {}),
+        };
 
     const { error } = await supabase
       .from("season_match_results")
@@ -580,7 +619,7 @@ export default function SeasonsPage() {
     setSeasonMatch(null);
     setOpponentTeamName(null);
     setPendingResult(null);
-    setScreenshotFile(null);
+    setScreenshotFiles([]);
     setResultError("");
     setMySubmittedResult(null);
     setMatchResolved(false);
@@ -760,6 +799,53 @@ export default function SeasonsPage() {
               )}
             </div>
 
+            {/* ── Match History ───────────────────────────────────────────────── */}
+            {matchHistory.length > 0 && (
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
+                <h2 className="text-sm font-semibold text-white mb-4">Match Results</h2>
+                <div className="space-y-2">
+                  {matchHistory.map((m) => {
+                    const aName = m.team_a?.team_name ?? m.team_a_id.slice(0, 6);
+                    const bName = m.team_b?.team_name ?? m.team_b_id.slice(0, 6);
+                    const aWon = m.winner_team_id === m.team_a_id;
+                    return (
+                      <div key={m.id} className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white/3 border border-white/8">
+                        <span className={`text-sm font-semibold flex-1 text-right truncate ${m.status === "confirmed" && aWon ? "text-green-400" : "text-gray-400"}`}>
+                          {aName}
+                        </span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {m.status === "confirmed" ? (
+                            <>
+                              <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${aWon ? "bg-green-500/20 text-green-400" : "bg-white/5 text-gray-500"}`}>W</span>
+                              <span className="text-xs text-gray-600">vs</span>
+                              <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${!aWon ? "bg-green-500/20 text-green-400" : "bg-white/5 text-gray-500"}`}>W</span>
+                            </>
+                          ) : (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-500/15 border border-yellow-500/25 text-yellow-400">Disputed</span>
+                          )}
+                        </div>
+                        <span className={`text-sm font-semibold flex-1 truncate ${m.status === "confirmed" && !aWon ? "text-green-400" : "text-gray-400"}`}>
+                          {bName}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* ── Not in season notice ─────────────────────────────────────────── */}
+            {captainTeamId && !teamInSeason && selectedSeason && (
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-5 py-4 flex items-center gap-3">
+                <svg className="w-4 h-4 text-gray-500 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+                </svg>
+                <p className="text-sm text-gray-400">
+                  <span className="text-white font-medium">{captainTeamName}</span> is not enrolled in this season. Contact an admin to be added to the standings.
+                </p>
+              </div>
+            )}
+
             {/* ── Season Matchmaking ──────────────────────────────────────────── */}
             {selectedSeason && captainTeamId && teamInSeason && (
               <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
@@ -862,7 +948,7 @@ export default function SeasonsPage() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => { setPendingResult("lost"); setScreenshotFile(null); setResultError(""); }}
+                            onClick={() => { setPendingResult("lost"); setScreenshotFiles([]); setResultError(""); }}
                             className={`py-3 rounded-xl border text-sm font-semibold transition-all duration-200 ${
                               pendingResult === "lost"
                                 ? "border-red-500/50 bg-red-500/15 text-red-400"
@@ -876,27 +962,63 @@ export default function SeasonsPage() {
                         {/* Screenshot upload (required for wins) */}
                         {pendingResult === "won" && (
                           <div className="space-y-2">
-                            <p className="text-xs text-gray-400">
-                              Screenshot <span className="text-red-400">required</span>
-                            </p>
-                            <label className={`flex items-center justify-center gap-2 w-full py-3 rounded-xl border border-dashed cursor-pointer transition-all duration-200 ${
-                              screenshotFile
-                                ? "border-green-500/40 bg-green-500/8 text-green-400"
-                                : "border-white/20 bg-white/3 text-gray-400 hover:border-violet-500/40 hover:text-gray-200"
-                            }`}>
-                              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-                              </svg>
-                              <span className="text-sm truncate max-w-[200px]">
-                                {screenshotFile ? screenshotFile.name : "Choose screenshot"}
+                            <div className="flex items-center justify-between">
+                              <p className="text-xs text-gray-400">
+                                Screenshots <span className="text-red-400">required</span>
+                              </p>
+                              <span className={`text-xs font-medium ${screenshotFiles.length >= 5 ? "text-amber-400" : "text-gray-500"}`}>
+                                {screenshotFiles.length}/5
                               </span>
-                              <input
-                                type="file"
-                                accept="image/*"
-                                className="hidden"
-                                onChange={(e) => setScreenshotFile(e.target.files?.[0] ?? null)}
-                              />
-                            </label>
+                            </div>
+
+                            {/* Selected files list */}
+                            {screenshotFiles.length > 0 && (
+                              <div className="space-y-1.5">
+                                {screenshotFiles.map((f, idx) => (
+                                  <div key={idx} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-500/8 border border-green-500/20">
+                                    <svg className="w-3.5 h-3.5 text-green-400 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909" />
+                                    </svg>
+                                    <span className="text-xs text-green-400 truncate flex-1">{f.name}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => setScreenshotFiles((prev) => prev.filter((_, i) => i !== idx))}
+                                      className="text-gray-500 hover:text-red-400 transition-colors shrink-0"
+                                    >
+                                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                      </svg>
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Add more button (hidden when at limit) */}
+                            {screenshotFiles.length < 5 && (
+                              <label className="flex items-center justify-center gap-2 w-full py-3 rounded-xl border border-dashed cursor-pointer transition-all duration-200 border-white/20 bg-white/3 text-gray-400 hover:border-violet-500/40 hover:text-gray-200">
+                                <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                                </svg>
+                                <span className="text-sm">
+                                  {screenshotFiles.length === 0 ? "Choose screenshots" : "Add more"}
+                                </span>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  multiple
+                                  className="hidden"
+                                  onChange={(e) => {
+                                    const picked = Array.from(e.target.files ?? []);
+                                    setScreenshotFiles((prev) => {
+                                      const combined = [...prev, ...picked];
+                                      return combined.slice(0, 5);
+                                    });
+                                    e.target.value = "";
+                                  }}
+                                />
+                              </label>
+                            )}
                           </div>
                         )}
 
@@ -905,7 +1027,7 @@ export default function SeasonsPage() {
                         )}
 
                         {/* Submit button */}
-                        {pendingResult && (pendingResult === "lost" || screenshotFile) && (
+                        {pendingResult && (pendingResult === "lost" || screenshotFiles.length > 0) && (
                           <button
                             type="button"
                             onClick={handleSubmitResult}

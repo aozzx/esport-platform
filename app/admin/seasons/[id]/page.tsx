@@ -141,14 +141,13 @@ export default function AdminSeasonPage() {
       return;
     }
 
-    await supabase
-      .from("season_standings")
-      .update({
-        points: standing.points + 3,
-        wins: standing.wins + 1,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", standing.id);
+    const { error } = await supabase.rpc("update_standing_result", {
+      p_season_id: seasonId,
+      p_team_id:   standing.team_id,
+      p_won:       true,
+    });
+
+    if (error) { showError("Failed to update standing."); setUpdatingId(null); return; }
 
     await refreshStandings();
     setUpdatingId(null);
@@ -170,13 +169,13 @@ export default function AdminSeasonPage() {
       return;
     }
 
-    await supabase
-      .from("season_standings")
-      .update({
-        losses: standing.losses + 1,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", standing.id);
+    const { error } = await supabase.rpc("update_standing_result", {
+      p_season_id: seasonId,
+      p_team_id:   standing.team_id,
+      p_won:       false,
+    });
+
+    if (error) { showError("Failed to update standing."); setUpdatingId(null); return; }
 
     await refreshStandings();
     setUpdatingId(null);

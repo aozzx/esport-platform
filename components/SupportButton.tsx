@@ -1,9 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
-type Tab = "complaint" | "suggestion";
+type Tab = "complaint" | "suggestion" | "my_reports";
+
+type MyReport = {
+  id: string;
+  type: string;
+  title: string;
+  description: string;
+  status: string | null;
+  created_at: string;
+};
 
 export default function SupportButton() {
   const supabase = useMemo(() => createClient(), []);
@@ -17,6 +26,28 @@ export default function SupportButton() {
   const [submitting, setSubmitting] = useState(false);
   const [success, setSuccess] = useState("");
   const [error, setError] = useState("");
+
+  // My Reports state
+  const [myReports, setMyReports] = useState<MyReport[]>([]);
+  const [loadingReports, setLoadingReports] = useState(false);
+
+  useEffect(() => {
+    if (tab !== "my_reports" || !open) return;
+    setLoadingReports(true);
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) { setLoadingReports(false); return; }
+      supabase
+        .from("reports")
+        .select("id, type, title, description, status, created_at")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(20)
+        .then(({ data }) => {
+          setMyReports((data ?? []) as MyReport[]);
+          setLoadingReports(false);
+        });
+    });
+  }, [tab, open, supabase]);
 
   function resetForm() {
     setTitle("");
@@ -127,23 +158,64 @@ export default function SupportButton() {
 
             {/* Tabs */}
             <div className="flex items-center gap-1 border-b border-white/10 mb-5">
-              {(["complaint", "suggestion"] as Tab[]).map((t) => (
+              {(["complaint", "suggestion", "my_reports"] as Tab[]).map((t) => (
                 <button
                   key={t}
                   onClick={() => handleTabChange(t)}
                   className={
-                    "px-4 py-2.5 text-sm font-medium capitalize transition-all duration-200 border-b-2 -mb-px " +
+                    "px-3 py-2.5 text-sm font-medium transition-all duration-200 border-b-2 -mb-px " +
                     (tab === t
                       ? "border-violet-500 text-white"
                       : "border-transparent text-gray-500 hover:text-gray-300")
                   }
                 >
-                  {t}
+                  {t === "my_reports" ? "My Reports" : t.charAt(0).toUpperCase() + t.slice(1)}
                 </button>
               ))}
             </div>
 
-            {/* Form */}
+            {/* My Reports panel */}
+            {tab === "my_reports" ? (
+              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                {loadingReports ? (
+                  <div className="flex justify-center py-6">
+                    <svg className="w-5 h-5 animate-spin text-violet-500" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  </div>
+                ) : myReports.length === 0 ? (
+                  <p className="text-sm text-gray-500 text-center py-6">No reports submitted yet.</p>
+                ) : (
+                  myReports.map((r) => (
+                    <div key={r.id} className="px-4 py-3 rounded-xl bg-white/5 border border-white/10 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-medium text-white truncate">{r.title}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full border shrink-0 ${
+                          r.status === "resolved"
+                            ? "bg-green-500/15 border-green-500/25 text-green-400"
+                            : r.status === "rejected"
+                            ? "bg-red-500/15 border-red-500/25 text-red-400"
+                            : "bg-yellow-500/15 border-yellow-500/25 text-yellow-400"
+                        }`}>
+                          {r.status ?? "pending"}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500 capitalize">{r.type}</span>
+                        <span className="text-gray-700">·</span>
+                        <span className="text-xs text-gray-600">
+                          {new Date(r.created_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-400 line-clamp-2">{r.description}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+            ) : (
+
+            /* Form */
             <form onSubmit={handleSubmit} className="space-y-3">
 
               {success && (
@@ -211,6 +283,7 @@ export default function SupportButton() {
               </button>
 
             </form>
+            )}
           </div>
         </div>
       )}
