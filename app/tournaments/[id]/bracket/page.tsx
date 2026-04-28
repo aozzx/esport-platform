@@ -286,7 +286,7 @@ export default function BracketPage() {
     const res = await fetch(`/api/tournaments/${tournamentId}/bracket/generate`, { method: "POST" });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      setMutationError(body.error ?? "Failed to generate bracket.");
+      setMutationError((body.error ?? "Failed to generate bracket.") + (body.detail ? ` — ${body.detail}` : ""));
       setGenerating(false);
       return;
     }
