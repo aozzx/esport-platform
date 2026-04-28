@@ -188,7 +188,7 @@ export default function SeasonsPage() {
     setSeasonMatch(null);
     setOpponentTeamName(null);
     setPendingResult(null);
-    setScreenshotFile(null);
+    setScreenshotFiles([]);
     setResultError("");
     setMySubmittedResult(null);
     setMatchResolved(false);
@@ -937,7 +937,7 @@ export default function SeasonsPage() {
                         <div className="grid grid-cols-2 gap-3">
                           <button
                             type="button"
-                            onClick={() => { setPendingResult("won"); setScreenshotFile(null); setResultError(""); }}
+                            onClick={() => { setPendingResult("won"); setScreenshotFiles([]); setResultError(""); }}
                             className={`py-3 rounded-xl border text-sm font-semibold transition-all duration-200 ${
                               pendingResult === "won"
                                 ? "border-green-500/50 bg-green-500/15 text-green-400"
