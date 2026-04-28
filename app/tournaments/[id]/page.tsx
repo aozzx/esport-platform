@@ -414,7 +414,56 @@ export default function TournamentDetailPage() {
         {/* Tournament title block */}
         <div className="absolute bottom-0 left-0 right-0 px-6 pb-5 max-w-5xl mx-auto">
           <div className="flex items-end justify-between gap-4 flex-wrap">
-            <div>
+            <div className="flex items-end gap-4">
+              {/* Game image thumbnail */}
+              <div className="shrink-0 relative group">
+                <div className="w-20 h-24 md:w-24 md:h-28 rounded-xl overflow-hidden border-2 border-white/20 shadow-xl shadow-black/60 bg-gray-800">
+                  {isSafeImageUrl(tournament.game_image_url) ? (
+                    <img
+                      src={tournament.game_image_url!}
+                      alt={tournament.game}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center gap-1 bg-gradient-to-b from-violet-900/40 to-gray-900">
+                      <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909" />
+                      </svg>
+                    </div>
+                  )}
+                </div>
+                {/* Admin upload overlay */}
+                {isAdmin && (
+                  <label className="absolute inset-0 rounded-xl flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-200 cursor-pointer">
+                    <div className="flex flex-col items-center gap-1">
+                      {uploadingImage ? (
+                        <svg className="w-5 h-5 text-white animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                      ) : (
+                        <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                        </svg>
+                      )}
+                      <span className="text-[10px] text-white font-medium">{uploadingImage ? "..." : "Upload"}</span>
+                    </div>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      disabled={uploadingImage}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleGameImageUpload(file);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                )}
+              </div>
+
+              <div>
               <div className="flex items-center gap-2 mb-1">
                 <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${sc.bg} ${sc.text}`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${sc.dot}`} />
@@ -425,6 +474,10 @@ export default function TournamentDetailPage() {
               <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight leading-tight">
                 {tournament.name}
               </h1>
+              {imageUploadError && (
+                <p className="text-xs text-red-400 mt-1">{imageUploadError}</p>
+              )}
+              </div>
             </div>
             {isAdmin && (
               <a
@@ -534,57 +587,6 @@ export default function TournamentDetailPage() {
                 )}
               </div>
             </div>
-
-            {/* Game image */}
-            {(tournament.game_image_url || isAdmin) && (
-              <div className="rounded-2xl border border-white/8 bg-white/4 p-6 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Game Image</h2>
-                  {isAdmin && (
-                    <label className="cursor-pointer">
-                      <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/8 hover:bg-white/12 border border-white/10 text-gray-300 text-xs font-medium transition-all duration-200">
-                        {uploadingImage ? (
-                          <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                          </svg>
-                        ) : (
-                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-                          </svg>
-                        )}
-                        {uploadingImage ? "Uploading..." : tournament.game_image_url ? "Change Image" : "Upload Image"}
-                      </div>
-                      <input
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        disabled={uploadingImage}
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (file) handleGameImageUpload(file);
-                          e.target.value = "";
-                        }}
-                      />
-                    </label>
-                  )}
-                </div>
-                {imageUploadError && (
-                  <p className="text-xs text-red-400">{imageUploadError}</p>
-                )}
-                {isSafeImageUrl(tournament.game_image_url) ? (
-                  <img
-                    src={tournament.game_image_url!}
-                    alt={tournament.game}
-                    className="w-full max-h-64 object-cover rounded-xl border border-white/8"
-                  />
-                ) : (
-                  <div className="w-full h-32 rounded-xl border border-dashed border-white/15 flex items-center justify-center text-gray-600 text-sm">
-                    {isAdmin ? "Upload a game image above" : "No image yet"}
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* Registration status / CTA */}
             {userTeamAlreadyRegistered && (
