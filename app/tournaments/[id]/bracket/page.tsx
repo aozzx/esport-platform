@@ -674,13 +674,9 @@ export default function BracketPage() {
                             )}
                           </div>
 
-                          {/* Score / VS */}
+                          {/* VS */}
                           <div className="shrink-0 text-center w-14">
-                            {match.winner_id && (match.score_a !== null || match.score_b !== null) ? (
-                              <span className="text-xs font-bold text-white">{match.score_a ?? 0} — {match.score_b ?? 0}</span>
-                            ) : (
-                              <span className="text-[10px] text-gray-600 font-bold">VS</span>
-                            )}
+                            <span className="text-[10px] text-gray-600 font-bold">VS</span>
                           </div>
 
                           {/* Team B */}
@@ -807,19 +803,21 @@ export default function BracketPage() {
                 >
                   <div className={`flex items-center gap-2 px-3 py-2 ${match.winner_id === match.team_a_id ? "bg-green-500/10" : match.winner_id && match.winner_id !== match.team_a_id ? "opacity-40" : ""}`}>
                     <span className="text-[10px] font-bold text-violet-300/80 w-7 shrink-0 truncate">{match.team_a?.team_tag ?? "—"}</span>
-                    <span className="text-xs font-medium text-white flex-1 truncate leading-tight">{match.team_a?.team_name ?? "TBD"}</span>
+                    {match.team_a_id ? (
+                      <a href={`/teams/${match.team_a_id}`} onClick={(e) => e.stopPropagation()} className="text-xs font-medium text-white flex-1 truncate leading-tight hover:text-violet-300 transition-colors">{match.team_a?.team_name ?? "TBD"}</a>
+                    ) : (
+                      <span className="text-xs font-medium text-white flex-1 truncate leading-tight">TBD</span>
+                    )}
                     {match.winner_id === match.team_a_id && <svg className="w-3.5 h-3.5 text-green-400 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>}
                   </div>
-                  {match.winner_id && (match.score_a !== null || match.score_b !== null) ? (
-                    <div className="flex items-center justify-center gap-1.5 py-0.5 bg-white/4">
-                      <span className="text-[10px] font-bold text-white/70">{match.score_a ?? 0}</span>
-                      <span className="text-[9px] text-gray-600">—</span>
-                      <span className="text-[10px] font-bold text-white/70">{match.score_b ?? 0}</span>
-                    </div>
-                  ) : (<div className="h-px bg-white/5 mx-2" />)}
+                  <div className="h-px bg-white/5 mx-2" />
                   <div className={`flex items-center gap-2 px-3 py-2 ${match.winner_id === match.team_b_id ? "bg-green-500/10" : match.winner_id && match.winner_id !== match.team_b_id ? "opacity-40" : !match.team_b_id ? "opacity-30" : ""}`}>
                     <span className="text-[10px] font-bold text-violet-300/80 w-7 shrink-0 truncate">{match.team_b?.team_tag ?? "—"}</span>
-                    <span className="text-xs font-medium text-white flex-1 truncate leading-tight">{match.team_b_id ? (match.team_b?.team_name ?? "TBD") : "BYE"}</span>
+                    {match.team_b_id ? (
+                      <a href={`/teams/${match.team_b_id}`} onClick={(e) => e.stopPropagation()} className="text-xs font-medium text-white flex-1 truncate leading-tight hover:text-violet-300 transition-colors">{match.team_b?.team_name ?? "TBD"}</a>
+                    ) : (
+                      <span className="text-xs font-medium text-white flex-1 truncate leading-tight">BYE</span>
+                    )}
                     {match.winner_id === match.team_b_id && <svg className="w-3.5 h-3.5 text-green-400 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>}
                   </div>
                   {(walkedOver || disputed || needsSubmit || (hasAction && !match.winner_id)) && (
@@ -1016,9 +1014,13 @@ export default function BracketPage() {
                           <span className="text-[10px] font-bold text-violet-300/80 w-7 shrink-0 truncate">
                             {match.team_a?.team_tag ?? "—"}
                           </span>
-                          <span className="text-xs font-medium text-white flex-1 truncate leading-tight">
-                            {match.team_a?.team_name ?? "TBD"}
-                          </span>
+                          {match.team_a_id ? (
+                            <a href={`/teams/${match.team_a_id}`} onClick={(e) => e.stopPropagation()} className="text-xs font-medium text-white flex-1 truncate leading-tight hover:text-violet-300 transition-colors">
+                              {match.team_a?.team_name ?? "TBD"}
+                            </a>
+                          ) : (
+                            <span className="text-xs font-medium text-white flex-1 truncate leading-tight">TBD</span>
+                          )}
                           {match.winner_id === match.team_a_id && (
                             <svg className="w-3.5 h-3.5 text-green-400 shrink-0" fill="currentColor" viewBox="0 0 20 20">
                               <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
@@ -1026,16 +1028,7 @@ export default function BracketPage() {
                           )}
                         </div>
 
-                        {/* Divider / Score */}
-                        {match.winner_id && (match.score_a !== null || match.score_b !== null) ? (
-                          <div className="flex items-center justify-center gap-1.5 py-0.5 bg-white/4">
-                            <span className="text-[10px] font-bold text-white/70">{match.score_a ?? 0}</span>
-                            <span className="text-[9px] text-gray-600">—</span>
-                            <span className="text-[10px] font-bold text-white/70">{match.score_b ?? 0}</span>
-                          </div>
-                        ) : (
-                          <div className="h-px bg-white/5 mx-2" />
-                        )}
+                        <div className="h-px bg-white/5 mx-2" />
 
                         {/* Team B row */}
                         <div className={`flex items-center gap-2 px-3 py-2 ${
@@ -1050,9 +1043,13 @@ export default function BracketPage() {
                           <span className="text-[10px] font-bold text-violet-300/80 w-7 shrink-0 truncate">
                             {match.team_b?.team_tag ?? "—"}
                           </span>
-                          <span className="text-xs font-medium text-white flex-1 truncate leading-tight">
-                            {match.team_b_id ? (match.team_b?.team_name ?? "TBD") : "BYE"}
-                          </span>
+                          {match.team_b_id ? (
+                            <a href={`/teams/${match.team_b_id}`} onClick={(e) => e.stopPropagation()} className="text-xs font-medium text-white flex-1 truncate leading-tight hover:text-violet-300 transition-colors">
+                              {match.team_b?.team_name ?? "TBD"}
+                            </a>
+                          ) : (
+                            <span className="text-xs font-medium text-white flex-1 truncate leading-tight">BYE</span>
+                          )}
                           {match.winner_id === match.team_b_id && (
                             <svg className="w-3.5 h-3.5 text-green-400 shrink-0" fill="currentColor" viewBox="0 0 20 20">
                               <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
@@ -1210,12 +1207,6 @@ export default function BracketPage() {
                   </div>
                 </div>
 
-                {/* Score display */}
-                {match.winner_id && (match.score_a !== null || match.score_b !== null) && (
-                  <p className="text-sm text-gray-400 text-center">
-                    Score: <span className="font-semibold text-white">{match.score_a ?? 0} – {match.score_b ?? 0}</span>
-                  </p>
-                )}
 
                 {/* Rosters */}
                 {rosterLoading ? (
