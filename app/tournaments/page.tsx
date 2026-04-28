@@ -38,17 +38,24 @@ export default function TournamentsPage() {
 
       const { data: profile } = await supabase
         .from("profiles")
-        .select("username, role")
+        .select("username, role, is_admin")
         .eq("id", user.id)
         .maybeSingle();
       setUsername(profile?.username ?? null);
       setRole(profile?.role ?? null);
 
-      const { data } = await supabase
+      const isAdminUser = profile?.is_admin || profile?.role === 'owner' || profile?.role === 'admin';
+
+      const query = supabase
         .from("tournaments")
         .select("id, name, game, format, status, max_teams, prize_pool, start_date, banner_url")
         .order("created_at", { ascending: false });
 
+      if (!isAdminUser) {
+        query.neq("status", "draft");
+      }
+
+      const { data } = await query;
       setTournaments(data ?? []);
       setLoading(false);
     }

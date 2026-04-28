@@ -25,6 +25,7 @@ type Tournament = {
   game_image_url: string | null;
   team_size: string | null;
   game_mode: string | null;
+  platform: string | null;
 };
 
 type TeamMember = {
@@ -93,7 +94,7 @@ export default function TournamentDetailPage() {
           .maybeSingle(),
         supabase
           .from("tournaments")
-          .select("id, name, game, format, status, max_teams, prize_pool, start_date, registration_opens_at, description, banner_url, game_image_url, team_size, game_mode")
+          .select("id, name, game, format, status, max_teams, prize_pool, start_date, registration_opens_at, description, banner_url, game_image_url, team_size, game_mode, platform")
           .eq("id", tournamentId)
           .maybeSingle(),
       ]);
@@ -101,7 +102,8 @@ export default function TournamentDetailPage() {
       if (cancelled) return;
 
       setUsername(profileResult.data?.username ?? null);
-      setIsAdmin(!!(profileResult.data?.is_admin || profileResult.data?.role === "owner" || profileResult.data?.role === "admin"));
+      const adminUser = !!(profileResult.data?.is_admin || profileResult.data?.role === "owner" || profileResult.data?.role === "admin");
+      setIsAdmin(adminUser);
 
       if (tournamentResult.error) {
         console.error("[tournament] query error:", tournamentResult.error.message, tournamentResult.error.code);
@@ -110,6 +112,12 @@ export default function TournamentDetailPage() {
         return;
       }
       if (!tournamentResult.data) { router.push("/tournaments"); return; }
+
+      // Draft tournaments are only visible to admins
+      if (tournamentResult.data.status === "draft" && !adminUser) {
+        router.push("/tournaments");
+        return;
+      }
 
       setTournament(tournamentResult.data);
 
@@ -583,6 +591,12 @@ export default function TournamentDetailPage() {
                   <div className="space-y-1">
                     <p className="text-xs text-gray-500">Prize Pool</p>
                     <p className="text-sm font-medium text-yellow-400">{tournament.prize_pool}</p>
+                  </div>
+                )}
+                {tournament.platform && (
+                  <div className="space-y-1">
+                    <p className="text-xs text-gray-500">Platform</p>
+                    <p className="text-sm font-medium text-white">{tournament.platform}</p>
                   </div>
                 )}
               </div>

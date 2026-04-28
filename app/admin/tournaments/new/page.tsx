@@ -18,6 +18,7 @@ export default function NewTournamentPage() {
   const [format, setFormat] = useState("single_elimination");
   const [teamSize, setTeamSize] = useState("5v5");
   const [gameMode, setGameMode] = useState("Search and Destroy");
+  const [platform, setPlatform] = useState("Cross Platform");
   const [maxTeams, setMaxTeams] = useState("8");
   const [prizePool, setPrizePool] = useState("");
   const [startDate, setStartDate] = useState("");
@@ -77,6 +78,7 @@ export default function NewTournamentPage() {
         game_mode: gameMode,
         max_teams: Number(maxTeams),
         prize_pool: prizePool.trim() || null,
+        platform,
         start_date: startDate || null,
         registration_opens_at: registrationOpensAt || null,
         description: description.trim() || null,
@@ -163,17 +165,31 @@ export default function NewTournamentPage() {
                 />
               </div>
 
-              <div className="space-y-1.5">
-                <label className="block text-sm font-medium text-gray-300">Format</label>
-                <select
-                  value={format}
-                  onChange={(e) => setFormat(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl bg-gray-900 border border-white/10 text-white text-sm focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors duration-200"
-                >
-                  <option value="single_elimination">Single Elimination</option>
-                  <option value="double_elimination">Double Elimination</option>
-                  <option value="round_robin">Round Robin</option>
-                </select>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-medium text-gray-300">Format</label>
+                  <select
+                    value={format}
+                    onChange={(e) => setFormat(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl bg-gray-900 border border-white/10 text-white text-sm focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors duration-200"
+                  >
+                    <option value="single_elimination">Single Elimination</option>
+                    <option value="double_elimination">Double Elimination</option>
+                    <option value="round_robin">Round Robin</option>
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-medium text-gray-300">Platform</label>
+                  <select
+                    value={platform}
+                    onChange={(e) => setPlatform(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl bg-gray-900 border border-white/10 text-white text-sm focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors duration-200"
+                  >
+                    <option value="PC Allowed">PC Allowed</option>
+                    <option value="Cross Platform">Cross Platform</option>
+                    <option value="PlayStation Only">PlayStation Only</option>
+                  </select>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
