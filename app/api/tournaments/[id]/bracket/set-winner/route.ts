@@ -73,12 +73,32 @@ export async function POST(
     return NextResponse.json({ error: "Winner and loser cannot be the same team." }, { status: 400 });
   }
 
-  // Update match — only set winner and status; preserve any captain-submitted scores
+  // Pull captain-submitted scores from match_submissions (if both teams submitted)
+  const { data: submissions } = await supabase
+    .from("match_submissions")
+    .select("team_id, score_a, score_b")
+    .eq("match_id", matchId);
+
+  let finalScoreA: number | null = null;
+  let finalScoreB: number | null = null;
+  if (submissions && submissions.length > 0) {
+    // Prefer winner's submission for scores; fall back to any submission
+    const winnerSub = submissions.find((s: { team_id: string }) => s.team_id === winnerId);
+    const anySub = submissions[0] as { score_a: number | null; score_b: number | null };
+    const src = (winnerSub ?? anySub) as { score_a: number | null; score_b: number | null };
+    finalScoreA = src.score_a ?? null;
+    finalScoreB = src.score_b ?? null;
+  }
+
+  // Update match — set winner, status, and real scores from captain submissions
   const { error: updateError } = await supabase
     .from("matches")
     .update({
       winner_id: winnerId,
       status: "completed",
+      ...(finalScoreA !== null || finalScoreB !== null
+        ? { score_a: finalScoreA, score_b: finalScoreB }
+        : {}),
     })
     .eq("id", matchId);
 

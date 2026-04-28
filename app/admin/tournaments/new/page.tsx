@@ -21,6 +21,7 @@ export default function NewTournamentPage() {
   const [maxTeams, setMaxTeams] = useState("8");
   const [prizePool, setPrizePool] = useState("");
   const [startDate, setStartDate] = useState("");
+  const [registrationOpensAt, setRegistrationOpensAt] = useState("");
   const [description, setDescription] = useState("");
   const [rules, setRules] = useState("");
 
@@ -77,6 +78,7 @@ export default function NewTournamentPage() {
         max_teams: Number(maxTeams),
         prize_pool: prizePool.trim() || null,
         start_date: startDate || null,
+        registration_opens_at: registrationOpensAt || null,
         description: description.trim() || null,
         rules: rules.trim() || null,
         status: "draft",
@@ -227,17 +229,31 @@ export default function NewTournamentPage() {
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="block text-sm font-medium text-gray-300">
-                  Start Date
-                  <span className="ml-2 text-xs text-gray-600 font-normal">Optional</span>
-                </label>
-                <input
-                  type="datetime-local"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors duration-200"
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-medium text-gray-300">
+                    Registration Opens
+                    <span className="ml-2 text-xs text-gray-600 font-normal">Optional</span>
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={registrationOpensAt}
+                    onChange={(e) => setRegistrationOpensAt(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors duration-200"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-medium text-gray-300">
+                    Start Date
+                    <span className="ml-2 text-xs text-gray-600 font-normal">Optional</span>
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors duration-200"
+                  />
+                </div>
               </div>
 
               <div className="space-y-1.5">

@@ -19,8 +19,10 @@ type Tournament = {
   max_teams: number;
   prize_pool: string | null;
   start_date: string | null;
+  registration_opens_at: string | null;
   description: string | null;
   banner_url: string | null;
+  game_image_url: string | null;
   team_size: string | null;
   game_mode: string | null;
 };
@@ -65,6 +67,8 @@ export default function TournamentDetailPage() {
   const [loadError, setLoadError] = useState(false);
   const [activeTab, setActiveTab] = useState<ActiveTab>("overview");
   const [participantSearch, setParticipantSearch] = useState("");
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [imageUploadError, setImageUploadError] = useState("");
 
   const [registering, setRegistering] = useState(false);
   const [registerError, setRegisterError] = useState("");
@@ -89,7 +93,7 @@ export default function TournamentDetailPage() {
           .maybeSingle(),
         supabase
           .from("tournaments")
-          .select("id, name, game, format, status, max_teams, prize_pool, start_date, description, banner_url, team_size, game_mode")
+          .select("id, name, game, format, status, max_teams, prize_pool, start_date, registration_opens_at, description, banner_url, game_image_url, team_size, game_mode")
           .eq("id", tournamentId)
           .maybeSingle(),
       ]);
@@ -274,6 +278,34 @@ export default function TournamentDetailPage() {
     setRegisterSuccess("Team registered successfully!");
     setRegistering(false);
     setTimeout(() => setRegisterSuccess(""), 3000);
+  }
+
+  async function handleGameImageUpload(file: File) {
+    setUploadingImage(true);
+    setImageUploadError("");
+    const ext = file.name.split(".").pop() ?? "jpg";
+    const path = `tournament-images/${tournamentId}.${ext}`;
+    const { error: uploadError } = await supabase.storage
+      .from("match-proofs")
+      .upload(path, file, { upsert: true });
+    if (uploadError) {
+      setImageUploadError("Failed to upload image.");
+      setUploadingImage(false);
+      return;
+    }
+    const { data: urlData } = supabase.storage.from("match-proofs").getPublicUrl(path);
+    const publicUrl = urlData.publicUrl;
+    const { error: updateError } = await supabase
+      .from("tournaments")
+      .update({ game_image_url: publicUrl })
+      .eq("id", tournamentId);
+    if (updateError) {
+      setImageUploadError("Uploaded but failed to save URL.");
+      setUploadingImage(false);
+      return;
+    }
+    setTournament((prev) => prev ? { ...prev, game_image_url: publicUrl } : prev);
+    setUploadingImage(false);
   }
 
   function statusConfig(status: string) {
@@ -482,6 +514,12 @@ export default function TournamentDetailPage() {
                     <p className="text-sm font-medium text-white">{tournament.game_mode}</p>
                   </div>
                 )}
+                {tournament.registration_opens_at && (
+                  <div className="space-y-1">
+                    <p className="text-xs text-gray-500">Registration Opens</p>
+                    <p className="text-sm font-medium text-white">{fmtDateTime(tournament.registration_opens_at)}</p>
+                  </div>
+                )}
                 {tournament.start_date && (
                   <div className="space-y-1">
                     <p className="text-xs text-gray-500">Starts</p>
@@ -496,6 +534,57 @@ export default function TournamentDetailPage() {
                 )}
               </div>
             </div>
+
+            {/* Game image */}
+            {(tournament.game_image_url || isAdmin) && (
+              <div className="rounded-2xl border border-white/8 bg-white/4 p-6 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Game Image</h2>
+                  {isAdmin && (
+                    <label className="cursor-pointer">
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/8 hover:bg-white/12 border border-white/10 text-gray-300 text-xs font-medium transition-all duration-200">
+                        {uploadingImage ? (
+                          <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                          </svg>
+                        ) : (
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                          </svg>
+                        )}
+                        {uploadingImage ? "Uploading..." : tournament.game_image_url ? "Change Image" : "Upload Image"}
+                      </div>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        disabled={uploadingImage}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleGameImageUpload(file);
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
+                  )}
+                </div>
+                {imageUploadError && (
+                  <p className="text-xs text-red-400">{imageUploadError}</p>
+                )}
+                {isSafeImageUrl(tournament.game_image_url) ? (
+                  <img
+                    src={tournament.game_image_url!}
+                    alt={tournament.game}
+                    className="w-full max-h-64 object-cover rounded-xl border border-white/8"
+                  />
+                ) : (
+                  <div className="w-full h-32 rounded-xl border border-dashed border-white/15 flex items-center justify-center text-gray-600 text-sm">
+                    {isAdmin ? "Upload a game image above" : "No image yet"}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Registration status / CTA */}
             {userTeamAlreadyRegistered && (
