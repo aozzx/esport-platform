@@ -9,6 +9,7 @@ type Match = {
   id: string;
   round: number;
   match_number: number;
+  bracket: string; // 'winners' | 'losers' | 'grand_final' | null (SE/RR default 'winners')
   team_a_id: string | null;
   team_b_id: string | null;
   winner_id: string | null;
@@ -16,6 +17,7 @@ type Match = {
   score_b: number | null;
   status: string;
   scheduled_at: string | null;
+  walkover_requested_by: string | null;
   team_a: { team_name: string; team_tag: string } | null;
   team_b: { team_name: string; team_tag: string } | null;
   winner: { team_name: string; team_tag: string } | null;
@@ -34,6 +36,8 @@ type Registration = {
   team_id: string;
   teams: { team_name: string; team_tag: string } | null;
 };
+
+type RosterPlayer = { user_id: string; username: string };
 
 type RawTeam = { team_name: unknown; team_tag: unknown } | null;
 
@@ -70,6 +74,21 @@ function roundLabel(roundIdx: number, totalRounds: number): string {
   return `Round ${roundIdx + 1}`;
 }
 
+// LB slot height for round r (0-indexed): SLOT_H * 2^floor(r/2)
+function lbSlotH(r: number): number {
+  return SLOT_H * Math.pow(2, Math.floor(r / 2));
+}
+// LB match vertical center Y
+function getLBMatchCenterY(r: number, i: number): number {
+  const sh = lbSlotH(r);
+  return i * sh + sh / 2;
+}
+// LB match top Y
+function getLBMatchY(r: number, i: number): number {
+  const sh = lbSlotH(r);
+  return i * sh + (sh - MATCH_H) / 2;
+}
+
 export default function BracketPage() {
   const router = useRouter();
   const params = useParams();
@@ -88,9 +107,13 @@ export default function BracketPage() {
   const [mutationError, setMutationError] = useState("");
   const [mutationSuccess, setMutationSuccess] = useState("");
   const [selectedMatchId, setSelectedMatchId] = useState<string | null>(null);
+  // roster cache: team_id → players
+  const [rosterCache, setRosterCache] = useState<Record<string, RosterPlayer[]>>({});
+  const [rosterLoading, setRosterLoading] = useState(false);
+  const [tournamentFormat, setTournamentFormat] = useState<string>("single_elimination");
 
   const [submitForms, setSubmitForms] = useState<
-    Record<string, { claimedWinner: string; scoreA: string; scoreB: string; proofFile: File | null; uploading: boolean; submitting: boolean; error: string }>
+    Record<string, { claimedWinner: string; scoreA: string; scoreB: string; proofFiles: File[]; uploading: boolean; submitting: boolean; error: string }>
   >({});
 
   useEffect(() => {
@@ -116,6 +139,13 @@ export default function BracketPage() {
         .eq("captain_id", user.id);
       setCaptainOfTeams(new Set((captainedTeams ?? []).map((t: { id: string }) => t.id)));
 
+      const { data: tournament } = await supabase
+        .from("tournaments")
+        .select("format")
+        .eq("id", tournamentId)
+        .maybeSingle();
+      setTournamentFormat(tournament?.format ?? "single_elimination");
+
       await refreshMatches();
 
       const { data: regs } = await supabase
@@ -130,18 +160,64 @@ export default function BracketPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tournamentId, supabase, router]);
 
+  // Fetch rosters for both teams in the selected match
+  useEffect(() => {
+    if (!selectedMatchId) return;
+    const match = matches.find((m) => m.id === selectedMatchId);
+    if (!match) return;
+    const teamIds = [match.team_a_id, match.team_b_id].filter((id): id is string => !!id);
+    if (teamIds.length === 0) return;
+
+    // Only fetch teams we don't have cached yet
+    const missing = teamIds.filter((id) => !(id in rosterCache));
+    if (missing.length === 0) return;
+
+    setRosterLoading(true);
+    (async () => {
+      // tournament_roster → user_id list, then profiles for usernames
+      const { data: rows } = await supabase
+        .from("tournament_roster")
+        .select("team_id, user_id")
+        .eq("tournament_id", tournamentId)
+        .in("team_id", missing);
+
+      const userIds = [...new Set((rows ?? []).map((r: { user_id: string }) => r.user_id))];
+      const profileMap = new Map<string, string>();
+      if (userIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from("profiles")
+          .select("id, username")
+          .in("id", userIds);
+        for (const p of profiles ?? []) profileMap.set(p.id as string, p.username as string);
+      }
+
+      const newCache: Record<string, RosterPlayer[]> = {};
+      for (const id of missing) newCache[id] = [];
+      for (const r of rows ?? []) {
+        const row = r as { team_id: string; user_id: string };
+        if (!newCache[row.team_id]) newCache[row.team_id] = [];
+        newCache[row.team_id].push({ user_id: row.user_id, username: profileMap.get(row.user_id) ?? "Unknown" });
+      }
+
+      setRosterCache((prev) => ({ ...prev, ...newCache }));
+      setRosterLoading(false);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMatchId]);
+
   async function refreshMatches() {
     const { data: rawMatches } = await supabase
       .from("matches")
-      .select("id, round, match_number, team_a_id, team_b_id, winner_id, score_a, score_b, status, scheduled_at")
+      .select("id, round, match_number, bracket, team_a_id, team_b_id, winner_id, score_a, score_b, status, scheduled_at, walkover_requested_by")
       .eq("tournament_id", tournamentId)
       .order("round")
       .order("match_number");
 
     const rows = (rawMatches ?? []) as {
-      id: string; round: number; match_number: number;
+      id: string; round: number; match_number: number; bracket: string;
       team_a_id: string | null; team_b_id: string | null; winner_id: string | null;
       score_a: number | null; score_b: number | null; status: string; scheduled_at: string | null;
+      walkover_requested_by: string | null;
     }[];
 
     const teamIds = [
@@ -169,6 +245,7 @@ export default function BracketPage() {
       id: m.id,
       round: m.round,
       match_number: m.match_number,
+      bracket: m.bracket ?? "winners",
       team_a_id: m.team_a_id,
       team_b_id: m.team_b_id,
       winner_id: m.winner_id,
@@ -176,6 +253,7 @@ export default function BracketPage() {
       score_b: m.score_b,
       status: m.status,
       scheduled_at: m.scheduled_at,
+      walkover_requested_by: m.walkover_requested_by,
       team_a: m.team_a_id ? (teamMap.get(m.team_a_id) ?? null) : null,
       team_b: m.team_b_id ? (teamMap.get(m.team_b_id) ?? null) : null,
       winner: m.winner_id ? (teamMap.get(m.winner_id) ?? null) : null,
@@ -240,9 +318,19 @@ export default function BracketPage() {
 
   function getSubmitForm(matchId: string) {
     return submitForms[matchId] ?? {
-      claimedWinner: "", scoreA: "", scoreB: "", proofFile: null,
+      claimedWinner: "", scoreA: "", scoreB: "", proofFiles: [],
       uploading: false, submitting: false, error: "",
     };
+  }
+
+  // Parse proof_url which may be a single URL string or a JSON array of URLs
+  function parseProofUrls(proofUrl: string | null): string[] {
+    if (!proofUrl) return [];
+    try {
+      const parsed = JSON.parse(proofUrl);
+      if (Array.isArray(parsed)) return parsed as string[];
+    } catch { /* not JSON — treat as single URL */ }
+    return [proofUrl];
   }
 
   function patchSubmitForm(matchId: string, patch: Partial<typeof submitForms[string]>) {
@@ -258,20 +346,24 @@ export default function BracketPage() {
     patchSubmitForm(match.id, { submitting: true, error: "" });
 
     let proofUrl: string | undefined = undefined;
-    if (form.proofFile) {
+    if (form.proofFiles.length > 0) {
       patchSubmitForm(match.id, { uploading: true });
-      const ext = form.proofFile.name.split(".").pop() ?? "jpg";
-      const path = `${match.id}/${captainTeamId}-${Date.now()}.${ext}`;
-      const { error: uploadError } = await supabase.storage
-        .from("match-proofs")
-        .upload(path, form.proofFile, { upsert: true });
-
-      if (uploadError) {
-        patchSubmitForm(match.id, { submitting: false, uploading: false, error: "Failed to upload image." });
-        return;
+      const uploadedUrls: string[] = [];
+      for (const file of form.proofFiles) {
+        const ext = file.name.split(".").pop() ?? "jpg";
+        const path = `${match.id}/${captainTeamId}-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+        const { error: uploadError } = await supabase.storage
+          .from("match-proofs")
+          .upload(path, file, { upsert: true });
+        if (uploadError) {
+          patchSubmitForm(match.id, { submitting: false, uploading: false, error: `Failed to upload image ${uploadedUrls.length + 1}.` });
+          return;
+        }
+        const { data: urlData } = supabase.storage.from("match-proofs").getPublicUrl(path);
+        uploadedUrls.push(urlData.publicUrl);
       }
-      const { data: urlData } = supabase.storage.from("match-proofs").getPublicUrl(path);
-      proofUrl = urlData.publicUrl;
+      // Store single URL as plain string (backward-compat), multiple as JSON array
+      proofUrl = uploadedUrls.length === 1 ? uploadedUrls[0] : JSON.stringify(uploadedUrls);
       patchSubmitForm(match.id, { uploading: false });
     }
 
@@ -299,6 +391,19 @@ export default function BracketPage() {
       setMutationSuccess("Both teams agreed — winner confirmed!");
       setTimeout(() => setMutationSuccess(""), 4000);
     }
+  }
+
+  async function handleClaimWalkover(matchId: string, teamId: string) {
+    const res = await fetch(`/api/tournaments/${tournamentId}/bracket/claim-walkover`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ matchId, teamId }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) { setMutationError(body.error ?? "Failed to claim walkover."); return; }
+    await refreshMatches();
+    setMutationSuccess("Walkover request sent to admin.");
+    setTimeout(() => setMutationSuccess(""), 4000);
   }
 
   // ── Layout calculations ───────────────────────────────────────
@@ -355,6 +460,29 @@ export default function BracketPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rounds, roundNumbers]);
 
+  // Round Robin standings
+  const standings = useMemo(() => {
+    if (tournamentFormat !== "round_robin") return [];
+    const stats: Record<string, { teamId: string; wins: number; losses: number; played: number; points: number }> = {};
+    for (const reg of registrations) {
+      stats[reg.team_id] = { teamId: reg.team_id, wins: 0, losses: 0, played: 0, points: 0 };
+    }
+    for (const match of matches) {
+      if (!match.winner_id) continue;
+      const loserId = match.winner_id === match.team_a_id ? match.team_b_id : match.team_a_id;
+      if (stats[match.winner_id]) {
+        stats[match.winner_id].wins++;
+        stats[match.winner_id].played++;
+        stats[match.winner_id].points += 3;
+      }
+      if (loserId && stats[loserId]) {
+        stats[loserId].losses++;
+        stats[loserId].played++;
+      }
+    }
+    return Object.values(stats).sort((a, b) => b.points - a.points || b.wins - a.wins);
+  }, [matches, registrations, tournamentFormat]);
+
   // Selected match data
   const selectedMatch = useMemo(
     () => matches.find((m) => m.id === selectedMatchId) ?? null,
@@ -410,7 +538,7 @@ export default function BracketPage() {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                 </svg>Generating...</>
-              ) : "Generate Bracket"}
+              ) : tournamentFormat === "round_robin" ? "Generate Schedule" : tournamentFormat === "double_elimination" ? "Generate Bracket" : "Generate Bracket"}
             </button>
           )}
         </div>
@@ -433,7 +561,7 @@ export default function BracketPage() {
           </div>
         )}
 
-        {/* ── Bracket visual ───────────────────────────────────── */}
+        {/* ── Bracket / Schedule visual ─────────────────────────── */}
         {matches.length === 0 ? (
           <div className="rounded-2xl border border-white/8 bg-white/4 p-16 flex flex-col items-center justify-center text-center gap-4">
             <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/8 flex items-center justify-center">
@@ -442,13 +570,358 @@ export default function BracketPage() {
               </svg>
             </div>
             <div>
-              <p className="text-white font-semibold">No bracket yet</p>
+              <p className="text-white font-semibold">{tournamentFormat === "round_robin" ? "No schedule yet" : "No bracket yet"}</p>
               <p className="text-gray-500 text-sm mt-1">
-                {isAdmin ? "Click Generate Bracket above to create matches" : "Bracket will appear when the admin generates it"}
+                {isAdmin
+                  ? tournamentFormat === "round_robin"
+                    ? "Click Generate Schedule above to create the round-robin matches"
+                    : "Click Generate Bracket above to create matches"
+                  : tournamentFormat === "round_robin"
+                  ? "Schedule will appear when the admin generates it"
+                  : "Bracket will appear when the admin generates it"}
               </p>
             </div>
           </div>
+        ) : tournamentFormat === "round_robin" ? (
+          /* ── Round Robin view ─────────────────────────────────── */
+          <div className="space-y-4">
+            {/* Standings table */}
+            {standings.length > 0 && (
+              <div className="rounded-2xl border border-white/8 bg-white/4 overflow-hidden">
+                <div className="px-5 py-3 border-b border-white/8 flex items-center gap-2">
+                  <svg className="w-4 h-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                  </svg>
+                  <h2 className="text-sm font-semibold text-white">Standings</h2>
+                </div>
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-white/6">
+                      <th className="text-left px-5 py-2 text-[10px] font-semibold text-gray-500 uppercase tracking-wider w-8">#</th>
+                      <th className="text-left px-3 py-2 text-[10px] font-semibold text-gray-500 uppercase tracking-wider">Team</th>
+                      <th className="text-center px-3 py-2 text-[10px] font-semibold text-gray-500 uppercase tracking-wider">P</th>
+                      <th className="text-center px-3 py-2 text-[10px] font-semibold text-gray-500 uppercase tracking-wider">W</th>
+                      <th className="text-center px-3 py-2 text-[10px] font-semibold text-gray-500 uppercase tracking-wider">L</th>
+                      <th className="text-center px-3 py-2 text-[10px] font-semibold text-gray-500 uppercase tracking-wider">PTS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {standings.map((row, i) => {
+                      const reg = registrations.find((r) => r.team_id === row.teamId);
+                      return (
+                        <tr key={row.teamId} className={`border-b border-white/5 last:border-0 ${i === 0 && row.played > 0 ? "bg-yellow-500/5" : ""}`}>
+                          <td className="px-5 py-2.5 text-xs text-gray-500 font-medium">
+                            {i === 0 && row.played > 0 ? "🥇" : i + 1}
+                          </td>
+                          <td className="px-3 py-2.5">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-bold text-violet-300/80">{reg?.teams?.team_tag ?? "—"}</span>
+                              <span className="text-xs font-medium text-white truncate">{reg?.teams?.team_name ?? "Unknown"}</span>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2.5 text-xs text-center text-gray-400">{row.played}</td>
+                          <td className="px-3 py-2.5 text-xs text-center text-green-400 font-medium">{row.wins}</td>
+                          <td className="px-3 py-2.5 text-xs text-center text-red-400/70 font-medium">{row.losses}</td>
+                          <td className="px-3 py-2.5 text-xs text-center font-extrabold text-white">{row.points}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Matches grouped by round */}
+            {roundNumbers.map((rNum) => {
+              const rMatches = rounds[rNum] ?? [];
+              const done = rMatches.filter((m) => !!m.winner_id).length;
+              return (
+                <div key={rNum} className="rounded-2xl border border-white/8 bg-white/4 overflow-hidden">
+                  <div className="px-5 py-3 border-b border-white/8 flex items-center justify-between">
+                    <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Round {rNum}</h3>
+                    <span className="text-[10px] text-gray-600">{done}/{rMatches.length} completed</span>
+                  </div>
+                  <div className="divide-y divide-white/5">
+                    {rMatches.map((match) => {
+                      const matchSubs = submissions[match.id] ?? [];
+                      const myTeamId =
+                        match.team_a_id && captainOfTeams.has(match.team_a_id) ? match.team_a_id :
+                        match.team_b_id && captainOfTeams.has(match.team_b_id) ? match.team_b_id :
+                        null;
+                      const mySubmission = myTeamId ? matchSubs.find((s) => s.team_id === myTeamId) : null;
+                      const needsSubmit = !!myTeamId && !match.winner_id && !mySubmission;
+                      const walkedOver = !!match.walkover_requested_by && !match.winner_id;
+                      const isSelected = selectedMatchId === match.id;
+
+                      return (
+                        <button
+                          key={match.id}
+                          onClick={() => setSelectedMatchId(isSelected ? null : match.id)}
+                          className={`w-full flex items-center gap-3 px-5 py-3 text-left transition-all duration-150 ${
+                            isSelected ? "bg-violet-500/10" :
+                            needsSubmit ? "hover:bg-amber-500/5" :
+                            "hover:bg-white/4"
+                          }`}
+                        >
+                          {/* Team A */}
+                          <div className={`flex-1 flex items-center gap-2 min-w-0 ${match.winner_id && match.winner_id !== match.team_a_id ? "opacity-40" : ""}`}>
+                            <span className="text-[10px] font-bold text-violet-300/80 shrink-0">{match.team_a?.team_tag ?? "—"}</span>
+                            <span className="text-xs font-medium text-white truncate">{match.team_a?.team_name ?? "TBD"}</span>
+                            {match.winner_id === match.team_a_id && (
+                              <svg className="w-3.5 h-3.5 text-green-400 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                              </svg>
+                            )}
+                          </div>
+
+                          {/* Score / VS */}
+                          <div className="shrink-0 text-center w-14">
+                            {match.winner_id && (match.score_a !== null || match.score_b !== null) ? (
+                              <span className="text-xs font-bold text-white">{match.score_a ?? 0} — {match.score_b ?? 0}</span>
+                            ) : (
+                              <span className="text-[10px] text-gray-600 font-bold">VS</span>
+                            )}
+                          </div>
+
+                          {/* Team B */}
+                          <div className={`flex-1 flex items-center justify-end gap-2 min-w-0 ${match.winner_id && match.winner_id !== match.team_b_id ? "opacity-40" : ""}`}>
+                            {match.winner_id === match.team_b_id && (
+                              <svg className="w-3.5 h-3.5 text-green-400 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                              </svg>
+                            )}
+                            <span className="text-xs font-medium text-white truncate">{match.team_b?.team_name ?? "TBD"}</span>
+                            <span className="text-[10px] font-bold text-violet-300/80 shrink-0">{match.team_b?.team_tag ?? "—"}</span>
+                          </div>
+
+                          {/* Status pill */}
+                          <div className="shrink-0">
+                            {walkedOver ? (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-orange-500/15 text-orange-400 border border-orange-500/25 font-medium">Walkover</span>
+                            ) : needsSubmit ? (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/25 font-medium">Submit</span>
+                            ) : match.winner_id ? (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/15 text-green-400 border border-green-500/25 font-medium">Done</span>
+                            ) : (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/8 text-gray-500 border border-white/10 font-medium">Scheduled</span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : tournamentFormat === "double_elimination" ? (
+          /* ── Double Elimination view ─────────────────────────── */
+          (() => {
+            const wbMatches = matches.filter((m) => m.bracket === "winners");
+            const lbMatches = matches.filter((m) => m.bracket === "losers");
+            const gfMatch = matches.find((m) => m.bracket === "grand_final") ?? null;
+
+            // Build round maps
+            const wbRounds: Record<number, Match[]> = {};
+            for (const m of wbMatches) { if (!wbRounds[m.round]) wbRounds[m.round] = []; wbRounds[m.round].push(m); }
+            const wbRoundNums = Object.keys(wbRounds).map(Number).sort((a, b) => a - b);
+
+            const lbRounds: Record<number, Match[]> = {};
+            for (const m of lbMatches) { if (!lbRounds[m.round]) lbRounds[m.round] = []; lbRounds[m.round].push(m); }
+            const lbRoundNums = Object.keys(lbRounds).map(Number).sort((a, b) => a - b);
+
+            const wbNumRounds = wbRoundNums.length;
+            const lbNumRounds = lbRoundNums.length;
+
+            // WB canvas dimensions (same formula as SE)
+            const wbR1Count = wbRounds[wbRoundNums[0]]?.length ?? 0;
+            const wbCanvasH = wbR1Count * SLOT_H;
+            const wbCanvasW = wbNumRounds === 0 ? 0 : (wbNumRounds - 1) * ROUND_COL_W + MATCH_W;
+
+            // LB canvas dimensions
+            // LB R1 has the most matches; each match slot height = lbSlotH(0) = SLOT_H
+            const lbR1Count = lbRounds[lbRoundNums[0]]?.length ?? 0;
+            const lbCanvasH = lbR1Count * SLOT_H;
+            const lbCanvasW = lbNumRounds === 0 ? 0 : (lbNumRounds - 1) * ROUND_COL_W + MATCH_W;
+
+            // WB connectors
+            const wbConnectors: { key: string; d: string }[] = [];
+            for (let ri = 0; ri < wbRoundNums.length - 1; ri++) {
+              const rm = wbRounds[wbRoundNums[ri]] ?? [];
+              rm.forEach((_, mi) => {
+                const sx = getMatchX(ri) + MATCH_W;
+                const sy = getMatchCenterY(ri, mi);
+                const tx = getMatchX(ri + 1);
+                const ty = getMatchCenterY(ri + 1, Math.floor(mi / 2));
+                const mx = sx + CONN_W / 2;
+                wbConnectors.push({ key: `wb-${ri}-${mi}`, d: `M ${sx} ${sy} L ${mx} ${sy} L ${mx} ${ty} L ${tx} ${ty}` });
+              });
+            }
+
+            // LB connectors
+            const lbConnectors: { key: string; d: string }[] = [];
+            for (let ri = 0; ri < lbRoundNums.length - 1; ri++) {
+              const rIdx = lbRoundNums[ri] - 1; // 0-indexed round for lbSlotH
+              const rm = lbRounds[lbRoundNums[ri]] ?? [];
+              const isCulling = rIdx % 2 === 0;
+              rm.forEach((_, mi) => {
+                const sx = getMatchX(ri) + MATCH_W;
+                const sy = getLBMatchCenterY(rIdx, mi);
+                const tx = getMatchX(ri + 1);
+                const nextIdx = isCulling ? mi : Math.floor(mi / 2);
+                const nextRIdx = lbRoundNums[ri + 1] - 1;
+                const ty = getLBMatchCenterY(nextRIdx, nextIdx);
+                const mx = sx + CONN_W / 2;
+                lbConnectors.push({ key: `lb-${ri}-${mi}`, d: `M ${sx} ${sy} L ${mx} ${sy} L ${mx} ${ty} L ${tx} ${ty}` });
+              });
+            }
+
+            // Reusable match card renderer
+            function renderMatchCard(match: Match, x: number, y: number) {
+              const matchSubs = submissions[match.id] ?? [];
+              const myTeamId =
+                match.team_a_id && captainOfTeams.has(match.team_a_id) ? match.team_a_id :
+                match.team_b_id && captainOfTeams.has(match.team_b_id) ? match.team_b_id : null;
+              const mySubmission = myTeamId ? matchSubs.find((s) => s.team_id === myTeamId) : null;
+              const needsSubmit = !!myTeamId && !match.winner_id && !mySubmission;
+              const disputed = (() => {
+                const sA = matchSubs.find((s) => s.team_id === match.team_a_id);
+                const sB = matchSubs.find((s) => s.team_id === match.team_b_id);
+                return !!(sA && sB && sA.claimed_winner_id !== sB.claimed_winner_id);
+              })();
+              const walkedOver = !!match.walkover_requested_by && !match.winner_id;
+              const isSelected = selectedMatchId === match.id;
+              const hasAction = !match.winner_id && (isAdmin || !!myTeamId);
+
+              return (
+                <button
+                  key={match.id}
+                  onClick={() => setSelectedMatchId(isSelected ? null : match.id)}
+                  style={{ position: "absolute", left: x, top: y, width: MATCH_W, height: MATCH_H }}
+                  className={`text-left rounded-xl border overflow-hidden transition-all duration-200 focus:outline-none ${
+                    isSelected ? "border-violet-500/60 bg-violet-500/10 shadow-lg shadow-violet-500/10" :
+                    needsSubmit ? "border-amber-500/40 bg-amber-500/5 hover:border-amber-500/60" :
+                    match.winner_id ? "border-white/10 bg-gray-900/60 hover:border-white/20" :
+                    "border-white/10 bg-gray-900/80 hover:border-violet-500/40"
+                  }`}
+                >
+                  <div className={`flex items-center gap-2 px-3 py-2 ${match.winner_id === match.team_a_id ? "bg-green-500/10" : match.winner_id && match.winner_id !== match.team_a_id ? "opacity-40" : ""}`}>
+                    <span className="text-[10px] font-bold text-violet-300/80 w-7 shrink-0 truncate">{match.team_a?.team_tag ?? "—"}</span>
+                    <span className="text-xs font-medium text-white flex-1 truncate leading-tight">{match.team_a?.team_name ?? "TBD"}</span>
+                    {match.winner_id === match.team_a_id && <svg className="w-3.5 h-3.5 text-green-400 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>}
+                  </div>
+                  {match.winner_id && (match.score_a !== null || match.score_b !== null) ? (
+                    <div className="flex items-center justify-center gap-1.5 py-0.5 bg-white/4">
+                      <span className="text-[10px] font-bold text-white/70">{match.score_a ?? 0}</span>
+                      <span className="text-[9px] text-gray-600">—</span>
+                      <span className="text-[10px] font-bold text-white/70">{match.score_b ?? 0}</span>
+                    </div>
+                  ) : (<div className="h-px bg-white/5 mx-2" />)}
+                  <div className={`flex items-center gap-2 px-3 py-2 ${match.winner_id === match.team_b_id ? "bg-green-500/10" : match.winner_id && match.winner_id !== match.team_b_id ? "opacity-40" : !match.team_b_id ? "opacity-30" : ""}`}>
+                    <span className="text-[10px] font-bold text-violet-300/80 w-7 shrink-0 truncate">{match.team_b?.team_tag ?? "—"}</span>
+                    <span className="text-xs font-medium text-white flex-1 truncate leading-tight">{match.team_b_id ? (match.team_b?.team_name ?? "TBD") : "BYE"}</span>
+                    {match.winner_id === match.team_b_id && <svg className="w-3.5 h-3.5 text-green-400 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>}
+                  </div>
+                  {(walkedOver || disputed || needsSubmit || (hasAction && !match.winner_id)) && (
+                    <div className={`h-0.5 w-full ${walkedOver ? "bg-orange-500/60" : disputed ? "bg-red-500/60" : needsSubmit ? "bg-amber-500/60" : "bg-violet-500/30"}`} />
+                  )}
+                </button>
+              );
+            }
+
+            return (
+              <div className="space-y-4">
+                {/* Winners Bracket */}
+                {wbMatches.length > 0 && (
+                  <div className="rounded-2xl border border-white/8 bg-white/4 p-5">
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="w-2 h-2 rounded-full bg-violet-500" />
+                      <span className="text-xs font-semibold text-violet-400 uppercase tracking-wider">Winners Bracket</span>
+                    </div>
+                    <div className="flex mb-3" style={{ width: wbCanvasW }}>
+                      {wbRoundNums.map((_, ri) => (
+                        <div key={ri} style={{ width: ri < wbNumRounds - 1 ? ROUND_COL_W : MATCH_W }} className="text-center">
+                          <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">{roundLabel(ri, wbNumRounds)}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="overflow-x-auto">
+                      <div className="relative" style={{ width: wbCanvasW, height: wbCanvasH, minWidth: wbCanvasW }}>
+                        <svg className="absolute inset-0 pointer-events-none" width={wbCanvasW} height={wbCanvasH} style={{ overflow: "visible" }}>
+                          {wbConnectors.map(({ key, d }) => (
+                            <path key={key} d={d} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth={1.5} strokeLinejoin="round" />
+                          ))}
+                        </svg>
+                        {wbRoundNums.map((rNum, ri) =>
+                          (wbRounds[rNum] ?? []).map((match, mi) =>
+                            renderMatchCard(match, getMatchX(ri), getMatchY(ri, mi))
+                          )
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Losers Bracket */}
+                {lbMatches.length > 0 && (
+                  <div className="rounded-2xl border border-white/8 bg-white/4 p-5">
+                    <div className="flex items-center gap-2 mb-4">
+                      <div className="w-2 h-2 rounded-full bg-red-500" />
+                      <span className="text-xs font-semibold text-red-400 uppercase tracking-wider">Losers Bracket</span>
+                    </div>
+                    <div className="flex mb-3" style={{ width: lbCanvasW }}>
+                      {lbRoundNums.map((rNum, ri) => (
+                        <div key={ri} style={{ width: ri < lbNumRounds - 1 ? ROUND_COL_W : MATCH_W }} className="text-center">
+                          <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">LB Round {rNum}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="overflow-x-auto">
+                      <div className="relative" style={{ width: lbCanvasW, height: Math.max(lbCanvasH, MATCH_H + 32), minWidth: lbCanvasW }}>
+                        <svg className="absolute inset-0 pointer-events-none" width={lbCanvasW} height={Math.max(lbCanvasH, MATCH_H + 32)} style={{ overflow: "visible" }}>
+                          {lbConnectors.map(({ key, d }) => (
+                            <path key={key} d={d} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={1.5} strokeLinejoin="round" />
+                          ))}
+                        </svg>
+                        {lbRoundNums.map((rNum, ri) => {
+                          const rIdx = rNum - 1; // 0-indexed for lbSlotH
+                          return (lbRounds[rNum] ?? []).map((match, mi) =>
+                            renderMatchCard(match, getMatchX(ri), getLBMatchY(rIdx, mi))
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Grand Final */}
+                {gfMatch && (
+                  <div className="rounded-2xl border border-yellow-500/20 bg-yellow-500/5 p-5">
+                    <div className="flex items-center gap-2 mb-4">
+                      <span className="text-base">🏆</span>
+                      <span className="text-xs font-semibold text-yellow-400 uppercase tracking-wider">Grand Final</span>
+                    </div>
+                    <div className="relative" style={{ width: MATCH_W, height: MATCH_H }}>
+                      {renderMatchCard(gfMatch, 0, 0)}
+                    </div>
+                    {gfMatch.winner_id && (
+                      <div className="mt-4 flex items-center gap-3 px-5 py-3 rounded-xl border border-yellow-500/30 bg-yellow-500/8 w-fit">
+                        <span className="text-lg">🏆</span>
+                        <div>
+                          <p className="text-[10px] text-yellow-500/70 uppercase tracking-widest font-semibold">Champion</p>
+                          <p className="text-sm font-extrabold text-yellow-400">
+                            {(gfMatch.winner ?? (gfMatch.winner_id === gfMatch.team_a_id ? gfMatch.team_a : gfMatch.team_b))?.team_name ?? "TBD"}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()
         ) : (
+          /* ── Single Elimination bracket ───────────────────────── */
           <div className="rounded-2xl border border-white/8 bg-white/4 p-6">
             {/* Round header labels */}
             <div className="flex mb-4" style={{ width: canvasW, minWidth: canvasW }}>
@@ -509,6 +982,7 @@ export default function BracketPage() {
                     const teamBSubmission = matchSubs.find((s) => s.team_id === match.team_b_id);
                     const bothSub = !!(teamASubmission && teamBSubmission);
                     const disputed = bothSub && teamASubmission.claimed_winner_id !== teamBSubmission.claimed_winner_id;
+                    const walkedOver = !!match.walkover_requested_by && !match.winner_id;
 
                     return (
                       <button
@@ -552,8 +1026,16 @@ export default function BracketPage() {
                           )}
                         </div>
 
-                        {/* Divider */}
-                        <div className="h-px bg-white/5 mx-2" />
+                        {/* Divider / Score */}
+                        {match.winner_id && (match.score_a !== null || match.score_b !== null) ? (
+                          <div className="flex items-center justify-center gap-1.5 py-0.5 bg-white/4">
+                            <span className="text-[10px] font-bold text-white/70">{match.score_a ?? 0}</span>
+                            <span className="text-[9px] text-gray-600">—</span>
+                            <span className="text-[10px] font-bold text-white/70">{match.score_b ?? 0}</span>
+                          </div>
+                        ) : (
+                          <div className="h-px bg-white/5 mx-2" />
+                        )}
 
                         {/* Team B row */}
                         <div className={`flex items-center gap-2 px-3 py-2 ${
@@ -579,8 +1061,9 @@ export default function BracketPage() {
                         </div>
 
                         {/* Status indicator strip */}
-                        {(disputed || needsSubmit || (hasAction && !match.winner_id)) && (
+                        {(walkedOver || disputed || needsSubmit || (hasAction && !match.winner_id)) && (
                           <div className={`h-0.5 w-full ${
+                            walkedOver ? "bg-orange-500/60" :
                             disputed ? "bg-red-500/60" :
                             needsSubmit ? "bg-amber-500/60" :
                             "bg-violet-500/30"
@@ -592,6 +1075,25 @@ export default function BracketPage() {
                 })}
               </div>
             </div>
+
+            {/* Champion card */}
+            {(() => {
+              const lastRound = roundNumbers[roundNumbers.length - 1];
+              const finalMatch = rounds[lastRound]?.[0];
+              if (!finalMatch?.winner_id) return null;
+              const champ = finalMatch.winner ?? (finalMatch.winner_id === finalMatch.team_a_id ? finalMatch.team_a : finalMatch.team_b);
+              return (
+                <div className="mt-6 flex justify-center">
+                  <div className="inline-flex flex-col items-center gap-3 px-8 py-5 rounded-2xl border border-yellow-500/30 bg-yellow-500/5">
+                    <span className="text-2xl">🏆</span>
+                    <div className="text-center">
+                      <p className="text-[10px] font-semibold text-yellow-500/70 uppercase tracking-widest mb-1">Champion</p>
+                      <p className="text-lg font-extrabold text-yellow-400 tracking-tight">{champ?.team_name ?? "TBD"}</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Legend */}
             <div className="flex items-center gap-5 mt-5 pt-4 border-t border-white/6">
@@ -701,8 +1203,42 @@ export default function BracketPage() {
                 {/* Score display */}
                 {match.winner_id && (match.score_a !== null || match.score_b !== null) && (
                   <p className="text-sm text-gray-400 text-center">
-                    Final score: <span className="font-semibold text-white">{match.score_a ?? 0} – {match.score_b ?? 0}</span>
+                    Score: <span className="font-semibold text-white">{match.score_a ?? 0} – {match.score_b ?? 0}</span>
                   </p>
+                )}
+
+                {/* Rosters */}
+                {rosterLoading ? (
+                  <p className="text-xs text-gray-600 text-center">Loading rosters...</p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    {[
+                      { teamId: match.team_a_id, team: match.team_a },
+                      { teamId: match.team_b_id, team: match.team_b },
+                    ].map(({ teamId, team }) => {
+                      if (!teamId) return null;
+                      const players = rosterCache[teamId] ?? [];
+                      return (
+                        <div key={teamId} className="rounded-xl border border-white/8 bg-white/3 p-3 space-y-2">
+                          <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
+                            {team?.team_name ?? "TBD"}
+                          </p>
+                          {players.length === 0 ? (
+                            <p className="text-[10px] text-gray-700 italic">No roster found</p>
+                          ) : (
+                            <ul className="space-y-1">
+                              {players.map((p) => (
+                                <li key={p.user_id} className="flex items-center gap-2">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-violet-500/60 shrink-0" />
+                                  <span className="text-xs text-gray-300 truncate">{p.username}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
 
                 {/* Submission status badges */}
@@ -731,6 +1267,34 @@ export default function BracketPage() {
                   </div>
                 )}
 
+                {/* Walkover status */}
+                {match.walkover_requested_by && !match.winner_id && (
+                  <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-orange-500/10 border border-orange-500/20 text-orange-400 text-xs font-medium">
+                    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                    </svg>
+                    Walkover requested — awaiting admin decision
+                  </div>
+                )}
+
+                {/* Captain: Claim Walkover button */}
+                {isCaptainInMatch && myTeamId && mySubmission && !match.winner_id && !match.walkover_requested_by && (() => {
+                  const opponentId = myTeamId === match.team_a_id ? match.team_b_id : match.team_a_id;
+                  const opponentSubmitted = !!matchSubs.find((s) => s.team_id === opponentId);
+                  if (opponentSubmitted) return null;
+                  return (
+                    <button
+                      onClick={() => handleClaimWalkover(match.id, myTeamId)}
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-orange-500/30 bg-orange-500/8 text-orange-400 text-xs font-semibold hover:bg-orange-500/15 transition-all duration-200"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3 3v1.5M3 21v-6m0 0l2.77-.693a9 9 0 016.208.682l.108.054a9 9 0 006.086.71l3.114-.732a48.524 48.524 0 01-.005-10.499l-3.11.732a9 9 0 01-6.085-.711l-.108-.054a9 9 0 00-6.208-.682L3 4.5M3 15V4.5" />
+                      </svg>
+                      Claim Walkover — Opponent No-Show
+                    </button>
+                  );
+                })()}
+
                 {/* Admin: view submission details */}
                 {isAdmin && !match.winner_id && matchSubs.length > 0 && (
                   <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 space-y-3">
@@ -748,15 +1312,15 @@ export default function BracketPage() {
                                 <span className="text-gray-400 ml-1">({sub.score_a ?? 0} – {sub.score_b ?? 0})</span>
                               )}
                             </p>
-                            {sub.proof_url && (
-                              <a href={sub.proof_url} target="_blank" rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 text-[10px] text-violet-400 hover:text-violet-300 transition-colors">
+                            {parseProofUrls(sub.proof_url).map((url, pi) => (
+                              <a key={pi} href={url} target="_blank" rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-[10px] text-violet-400 hover:text-violet-300 transition-colors mr-2">
                                 <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
                                 </svg>
-                                View screenshot
+                                Screenshot {parseProofUrls(sub.proof_url).length > 1 ? pi + 1 : ""}
                               </a>
-                            )}
+                            ))}
                           </div>
                         </div>
                       );
@@ -838,19 +1402,52 @@ export default function BracketPage() {
                       </div>
                     </div>
 
-                    {/* Proof upload */}
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs text-gray-500 shrink-0 w-14">Screenshot:</span>
-                      <label className="cursor-pointer">
-                        <div className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-gray-300 text-xs font-medium transition-all duration-200 inline-block">
-                          {form.proofFile ? form.proofFile.name : "Choose image"}
-                        </div>
-                        <input type="file" accept="image/*" className="hidden"
-                          onChange={(e) => patchSubmitForm(match.id, { proofFile: e.target.files?.[0] ?? null })} />
-                      </label>
-                      {form.proofFile && (
-                        <button onClick={() => patchSubmitForm(match.id, { proofFile: null })}
-                          className="text-gray-600 hover:text-gray-400 text-xs">✕</button>
+                    {/* Proof screenshots (up to 5, dynamic) */}
+                    <div className="space-y-1.5">
+                      <span className="text-xs text-gray-500">Screenshots ({form.proofFiles.length}/5):</span>
+                      <div className="space-y-1.5 pl-1">
+                        {/* Existing files */}
+                        {form.proofFiles.map((file, idx) => (
+                          <div key={idx} className="flex items-center gap-2">
+                            <div className="w-5 h-5 rounded-md bg-violet-500/15 border border-violet-500/20 flex items-center justify-center shrink-0">
+                              <span className="text-[9px] font-bold text-violet-400">{idx + 1}</span>
+                            </div>
+                            <span className="text-xs text-gray-300 truncate flex-1 max-w-[150px]">{file.name}</span>
+                            <button
+                              onClick={() => {
+                                const updated = [...form.proofFiles];
+                                updated.splice(idx, 1);
+                                patchSubmitForm(match.id, { proofFiles: updated });
+                              }}
+                              className="text-gray-600 hover:text-red-400 text-xs transition-colors shrink-0"
+                            >✕</button>
+                          </div>
+                        ))}
+                        {/* Add slot (only show if under 5) */}
+                        {form.proofFiles.length < 5 && (
+                          <label className="cursor-pointer block">
+                            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 border border-dashed border-white/15 hover:bg-white/10 hover:border-violet-500/30 text-gray-400 text-xs font-medium transition-all duration-200 w-fit">
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                              </svg>
+                              {form.proofFiles.length === 0 ? "Add screenshot" : "Add another"}
+                            </div>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const newFile = e.target.files?.[0];
+                                if (!newFile || form.proofFiles.length >= 5) return;
+                                patchSubmitForm(match.id, { proofFiles: [...form.proofFiles, newFile] });
+                                e.target.value = "";
+                              }}
+                            />
+                          </label>
+                        )}
+                      </div>
+                      {form.proofFiles.length > 0 && (
+                        <p className="text-[10px] text-gray-600 pl-1">Each screenshot = one game result</p>
                       )}
                     </div>
 
@@ -867,7 +1464,7 @@ export default function BracketPage() {
                       disabled={form.submitting || form.uploading}
                       className="px-5 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold transition-all duration-200"
                     >
-                      {form.uploading ? "Uploading image..." : form.submitting ? "Submitting..." : mySubmission ? "Resubmit" : "Submit Result"}
+                      {form.uploading ? `Uploading ${form.proofFiles.length > 1 ? "images" : "image"}...` : form.submitting ? "Submitting..." : mySubmission ? "Resubmit" : "Submit Result"}
                     </button>
                   </div>
                 )}

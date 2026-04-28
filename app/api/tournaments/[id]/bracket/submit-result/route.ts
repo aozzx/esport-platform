@@ -2,10 +2,59 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { isValidOrigin } from "@/lib/csrf";
 
-// ── Shared helper: advance bracket if all matches in a round are done ──────
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Supa = any;
+
+// ── Double Elimination advancement ────────────────────────────────────────────
+
+/** Fill the first empty team slot (team_a → team_b) in a match. */
+async function fillMatchSlot(supabase: Supa, matchId: string, teamId: string) {
+  const { data: m } = await supabase
+    .from("matches")
+    .select("id, team_a_id, team_b_id")
+    .eq("id", matchId)
+    .maybeSingle();
+  if (!m) return;
+
+  if (!m.team_a_id) {
+    await supabase.from("matches").update({ team_a_id: teamId }).eq("id", matchId);
+  } else if (!m.team_b_id) {
+    await supabase.from("matches").update({ team_b_id: teamId }).eq("id", matchId);
+  }
+}
+
+/**
+ * Advance teams after a double-elimination match completes.
+ * - Winner goes to next_winners_match_id
+ * - Loser goes to next_losers_match_id (only for WB matches; LB losers are eliminated)
+ */
+export async function advanceDE(
+  supabase: Supa,
+  matchId: string,
+  winnerId: string,
+  loserId: string | null
+) {
+  const { data: match } = await supabase
+    .from("matches")
+    .select("id, bracket, next_winners_match_id, next_losers_match_id")
+    .eq("id", matchId)
+    .maybeSingle();
+  if (!match) return;
+
+  if (match.next_winners_match_id) {
+    await fillMatchSlot(supabase, match.next_winners_match_id, winnerId);
+  }
+  // Only WB matches drop losers into LB; LB/GF losers are eliminated
+  if (match.bracket === "winners" && loserId && match.next_losers_match_id) {
+    await fillMatchSlot(supabase, match.next_losers_match_id, loserId);
+  }
+}
+
+// ── Single / Round-Robin advancement ─────────────────────────────────────────
+
+/** Advance bracket to the next round when all matches in a round are complete. */
 export async function advanceBracketIfComplete(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  supabase: any,
+  supabase: Supa,
   tournamentId: string,
   completedRound: number
 ) {
@@ -15,11 +64,12 @@ export async function advanceBracketIfComplete(
     .select("id, winner_id, match_number, team_a_id, team_b_id")
     .eq("tournament_id", tournamentId)
     .eq("round", completedRound)
+    .eq("bracket", "winners") // only SE/RR matches (default bracket value)
     .order("match_number", { ascending: true });
 
   if (error || !roundMatches || roundMatches.length === 0) return;
 
-  // Check if every match has a winner (or has no team_b — bye, auto-advances team_a)
+  // Check if every match has a winner (or is a bye — no team_b)
   const allDone = roundMatches.every(
     (m: { winner_id: string | null; team_b_id: string | null }) =>
       m.winner_id !== null || m.team_b_id === null
@@ -32,10 +82,10 @@ export async function advanceBracketIfComplete(
       m.winner_id ?? m.team_a_id
   );
 
-  // Only one winner left → tournament complete, no next round needed
+  // Only one winner left → tournament complete
   if (winners.length <= 1) return;
 
-  // Auto-confirm any bye matches (team_b_id is null → team_a wins automatically)
+  // Auto-confirm bye matches
   const byeMatches = roundMatches.filter(
     (m: { team_b_id: string | null; winner_id: string | null; team_a_id: string; id: string }) =>
       m.team_b_id === null && m.winner_id === null
@@ -67,7 +117,7 @@ export async function advanceBracketIfComplete(
   }
 }
 
-// ── POST /api/tournaments/[id]/bracket/submit-result ───────────────────────
+// ── POST /api/tournaments/[id]/bracket/submit-result ──────────────────────────
 export async function POST(
   req: NextRequest,
   ctx: RouteContext<"/api/tournaments/[id]/bracket/submit-result">
@@ -111,7 +161,6 @@ export async function POST(
   }
 
   // Verify caller is the captain of the specified team
-  // (supports captains who lead multiple teams — we check the specific teamId)
   const { data: team } = await supabase
     .from("teams")
     .select("id, captain_id")
@@ -128,7 +177,7 @@ export async function POST(
   // Fetch the match and verify it belongs to this tournament
   const { data: match } = await supabase
     .from("matches")
-    .select("id, tournament_id, team_a_id, team_b_id, winner_id, round")
+    .select("id, tournament_id, team_a_id, team_b_id, winner_id, round, bracket")
     .eq("id", matchId)
     .eq("tournament_id", tournamentId)
     .maybeSingle();
@@ -211,8 +260,6 @@ export async function POST(
 
   if (agreed) {
     const confirmedWinnerId = teamASubmission.claimed_winner_id as string;
-
-    // Use team A's score if they submitted it, otherwise team B's
     const finalScoreA = teamASubmission.score_a ?? teamBSubmission.score_a ?? null;
     const finalScoreB = teamASubmission.score_b ?? teamBSubmission.score_b ?? null;
 
@@ -231,13 +278,21 @@ export async function POST(
       return NextResponse.json({ error: "Failed to confirm winner." }, { status: 500 });
     }
 
-    // Advance bracket if this round is now complete
-    await advanceBracketIfComplete(supabase, tournamentId, match.round as number);
+    // Advance bracket
+    const loserId = confirmedWinnerId === match.team_a_id ? match.team_b_id : match.team_a_id;
+    const bracket = match.bracket as string | null;
+
+    if (bracket === "winners" || bracket === "losers" || bracket === "grand_final") {
+      // Double elimination — use pointer-based advancement
+      await advanceDE(supabase, matchId, confirmedWinnerId, loserId);
+    } else {
+      // Single elimination / round robin
+      await advanceBracketIfComplete(supabase, tournamentId, match.round as number);
+    }
 
     return NextResponse.json({ success: true, confirmed: true, winnerId: confirmedWinnerId });
   }
 
-  // One team submitted, waiting for the other
   return NextResponse.json({
     success: true,
     confirmed: false,

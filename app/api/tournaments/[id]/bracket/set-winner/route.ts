@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { isValidOrigin } from "@/lib/csrf";
-import { advanceBracketIfComplete } from "../submit-result/route";
+import { advanceBracketIfComplete, advanceDE } from "../submit-result/route";
 
 export async function POST(
   req: NextRequest,
@@ -49,7 +49,7 @@ export async function POST(
   // and to get authoritative team IDs (never trust client-supplied values for scoring)
   const { data: match, error: matchError } = await supabase
     .from("matches")
-    .select("id, tournament_id, team_a_id, team_b_id, winner_id, round")
+    .select("id, tournament_id, team_a_id, team_b_id, winner_id, round, bracket")
     .eq("id", matchId)
     .eq("tournament_id", tournamentId)
     .maybeSingle();
@@ -91,7 +91,7 @@ export async function POST(
   // Update season standings if the tournament is tied to a season
   const { data: tournament } = await supabase
     .from("tournaments")
-    .select("season_id")
+    .select("season_id, format")
     .eq("id", tournamentId)
     .maybeSingle();
 
@@ -143,8 +143,13 @@ export async function POST(
     await Promise.all(standingUpdates);
   }
 
-  // Advance bracket to next round if all matches in this round are now complete
-  await advanceBracketIfComplete(supabase, tournamentId, match.round as number);
+  // Advance bracket — DE uses pointer-based advancement; others use round-based
+  const bracket = match.bracket as string | null;
+  if (bracket === "winners" || bracket === "losers" || bracket === "grand_final") {
+    await advanceDE(supabase, matchId, winnerId, loserId);
+  } else {
+    await advanceBracketIfComplete(supabase, tournamentId, match.round as number);
+  }
 
   return NextResponse.json({ success: true });
 }
