@@ -1171,7 +1171,13 @@ export default function BracketPage() {
                     <div className="w-9 h-9 rounded-xl bg-violet-500/20 border border-violet-500/20 flex items-center justify-center shrink-0">
                       <span className="text-xs font-bold text-violet-300">{match.team_a?.team_tag ?? "?"}</span>
                     </div>
-                    <span className="text-sm font-semibold text-white flex-1 truncate">{match.team_a?.team_name ?? "TBD"}</span>
+                    {match.team_a_id ? (
+                      <a href={`/teams/${match.team_a_id}`} className="text-sm font-semibold text-white flex-1 truncate hover:text-violet-300 transition-colors duration-150" onClick={(e) => e.stopPropagation()}>
+                        {match.team_a?.team_name ?? "TBD"}
+                      </a>
+                    ) : (
+                      <span className="text-sm font-semibold text-white flex-1 truncate">TBD</span>
+                    )}
                     {match.winner_id === match.team_a_id && (
                       <span className="text-xs font-bold text-green-400">WIN</span>
                     )}
@@ -1191,9 +1197,13 @@ export default function BracketPage() {
                     <div className="w-9 h-9 rounded-xl bg-violet-500/20 border border-violet-500/20 flex items-center justify-center shrink-0">
                       <span className="text-xs font-bold text-violet-300">{match.team_b?.team_tag ?? "—"}</span>
                     </div>
-                    <span className="text-sm font-semibold text-white flex-1 truncate">
-                      {match.team_b_id ? (match.team_b?.team_name ?? "TBD") : "BYE"}
-                    </span>
+                    {match.team_b_id ? (
+                      <a href={`/teams/${match.team_b_id}`} className="text-sm font-semibold text-white flex-1 truncate hover:text-violet-300 transition-colors duration-150" onClick={(e) => e.stopPropagation()}>
+                        {match.team_b?.team_name ?? "TBD"}
+                      </a>
+                    ) : (
+                      <span className="text-sm font-semibold text-white flex-1 truncate">BYE</span>
+                    )}
                     {match.winner_id === match.team_b_id && (
                       <span className="text-xs font-bold text-green-400">WIN</span>
                     )}
@@ -1220,9 +1230,9 @@ export default function BracketPage() {
                       const players = rosterCache[teamId] ?? [];
                       return (
                         <div key={teamId} className="rounded-xl border border-white/8 bg-white/3 p-3 space-y-2">
-                          <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
+                          <a href={`/teams/${teamId}`} className="text-[10px] font-semibold text-gray-500 uppercase tracking-wider hover:text-violet-400 transition-colors duration-150 block" onClick={(e) => e.stopPropagation()}>
                             {team?.team_name ?? "TBD"}
-                          </p>
+                          </a>
                           {players.length === 0 ? (
                             <p className="text-[10px] text-gray-700 italic">No roster found</p>
                           ) : (

@@ -183,13 +183,7 @@ export default function MyReportsPage() {
           <div className="space-y-4">
             {reports.map((report) => {
               const isExpanded = expandedId === report.id;
-              const adminReplies = report.replies.filter(
-                (r) => r.profiles?.role === "admin" || r.profiles?.role === "owner"
-              );
-              const userReplied = report.replies.some(
-                (r) => r.user_id === userId && r.profiles?.role !== "admin" && r.profiles?.role !== "owner"
-              );
-              const canReply = adminReplies.length > 0 && !userReplied;
+              const canReply = report.status !== "resolved";
 
               return (
                 <div
@@ -221,9 +215,14 @@ export default function MyReportsPage() {
                           {report.replies.length} repl{report.replies.length === 1 ? "y" : "ies"}
                         </span>
                       )}
-                      {canReply && (
-                        <span className="w-2 h-2 rounded-full bg-violet-400 shrink-0" title="Admin replied — you can now respond" />
-                      )}
+                      {(() => {
+                        // Show dot when latest reply is from admin (new message waiting)
+                        const lastReply = report.replies[report.replies.length - 1];
+                        const lastIsAdmin = lastReply && (lastReply.profiles?.role === "admin" || lastReply.profiles?.role === "owner");
+                        return lastIsAdmin ? (
+                          <span className="w-2 h-2 rounded-full bg-violet-400 shrink-0" title="Admin replied" />
+                        ) : null;
+                      })()}
                       <svg
                         className={`w-4 h-4 text-gray-500 transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`}
                         fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"
@@ -299,11 +298,9 @@ export default function MyReportsPage() {
                             ) : "Reply"}
                           </button>
                         </div>
-                      ) : userReplied ? (
-                        <p className="text-xs text-gray-600 italic pt-1">You have already replied to this report.</p>
-                      ) : adminReplies.length === 0 ? (
-                        <p className="text-xs text-gray-600 italic pt-1">Awaiting admin response...</p>
-                      ) : null}
+                      ) : (
+                        <p className="text-xs text-gray-600 italic pt-1">This report has been resolved.</p>
+                      )}
                     </div>
                   )}
                 </div>

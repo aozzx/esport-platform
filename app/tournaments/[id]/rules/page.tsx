@@ -5,91 +5,30 @@ import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import Navbar from "@/components/Navbar";
 
-// ── Rules text parser ─────────────────────────────────────────────────────────
-// Format:
-//   # Section Title          → collapsible top-level section
-//   ## Subsection Title      → colored sub-heading inside section
-//   **Category Name**        → bold category label
-//   Setting Name - Value     → formatted key-value row
-//   Plain text               → paragraph
-
-type RuleBlock =
-  | { type: "text"; content: string }
-  | { type: "subsection"; title: string }
-  | { type: "category"; title: string }
-  | { type: "setting"; key: string; value: string };
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 type RuleSection = {
   title: string;
-  blocks: RuleBlock[];
+  content: string;
 };
 
-function parseRules(text: string): RuleSection[] {
-  if (!text.trim()) return [];
-  const lines = text.split("\n");
-  const sections: RuleSection[] = [];
-  let current: RuleSection | null = null;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (line.startsWith("# ")) {
-      if (current) sections.push(current);
-      current = { title: line.slice(2).trim(), blocks: [] };
-    } else if (current) {
-      if (line.startsWith("## ")) {
-        current.blocks.push({ type: "subsection", title: line.slice(3).trim() });
-      } else if (trimmed.startsWith("**") && trimmed.endsWith("**") && trimmed.length > 4) {
-        current.blocks.push({ type: "category", title: trimmed.slice(2, -2) });
-      } else if (trimmed.includes(" - ") && !trimmed.startsWith("**")) {
-        const dashIdx = trimmed.indexOf(" - ");
-        current.blocks.push({
-          type: "setting",
-          key: trimmed.slice(0, dashIdx).trim(),
-          value: trimmed.slice(dashIdx + 3).trim(),
-        });
-      } else if (trimmed) {
-        const last = current.blocks[current.blocks.length - 1];
-        if (last && last.type === "text") {
-          last.content += "\n" + trimmed;
-        } else {
-          current.blocks.push({ type: "text", content: trimmed });
-        }
-      }
-    }
-  }
-  if (current) sections.push(current);
-
-  // Fallback: no # headers — wrap all as single section
-  if (!sections.length && text.trim()) {
-    return [{ title: "", blocks: [{ type: "text", content: text.trim() }] }];
-  }
-
-  return sections;
+function parseSections(raw: string): RuleSection[] {
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed as RuleSection[];
+  } catch { /* not JSON — try legacy plain text */ }
+  // Legacy fallback: treat the whole thing as one unnamed section
+  if (raw.trim()) return [{ title: "Rules", content: raw.trim() }];
+  return [];
 }
 
-const FORMAT_HINT = `# Recent Rule Changes
-Brief summary of any updates...
+function serializeSections(sections: RuleSection[]): string {
+  return JSON.stringify(sections);
+}
 
-# Game Settings
-## Search and Destroy
-**Game**
-Round Time Limit - 1:30
-Match Start Time - 20 seconds
-Input Swap Allowed - Off
-Allow Callout Pings - Off
+// ── Page ─────────────────────────────────────────────────────────────────────
 
-**Advanced**
-Defuse Time - 7.5 Seconds
-Silent Plant - On
-
-**Player**
-Weapon Mounting - Off
-
-**Team**
-Team Assignment - On
-Friendly Fire - On`;
-
-export default function TournamentRulesPage() {
+export default function RulesPage() {
   const router = useRouter();
   const params = useParams();
   const tournamentId = params.id as string;
@@ -97,20 +36,21 @@ export default function TournamentRulesPage() {
 
   const [username, setUsername] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [tournamentName, setTournamentName] = useState<string | null>(null);
-  const [rules, setRules] = useState<string | null>(null);
+  const [rulesRaw, setRulesRaw] = useState<string>("");
+  const [sections, setSections] = useState<RuleSection[]>([]);
   const [loading, setLoading] = useState(true);
-
-  const [editing, setEditing] = useState(false);
-  const [rulesInput, setRulesInput] = useState("");
   const [saving, setSaving] = useState(false);
-  const [showHint, setShowHint] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
-  // Track which accordion sections are open (by index)
-  const [openSections, setOpenSections] = useState<Set<number>>(new Set([0]));
+  // Accordion open state
+  const [openIdx, setOpenIdx] = useState<Set<number>>(new Set([0]));
+
+  // Edit mode state
+  const [editMode, setEditMode] = useState(false);
+  const [editSections, setEditSections] = useState<RuleSection[]>([]);
 
   useEffect(() => {
-    let cancelled = false;
     async function load() {
       const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
       if (!UUID_RE.test(tournamentId)) { router.push("/tournaments"); return; }
@@ -118,48 +58,32 @@ export default function TournamentRulesPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { router.push("/sign-in"); return; }
 
-      const [profileResult, tournamentResult] = await Promise.all([
-        supabase.from("profiles").select("username, is_admin, role").eq("id", user.id).maybeSingle(),
-        supabase.from("tournaments").select("name, rules").eq("id", tournamentId).maybeSingle(),
-      ]);
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("username, is_admin, role")
+        .eq("id", user.id)
+        .maybeSingle();
 
-      if (cancelled) return;
+      setUsername(profile?.username ?? null);
+      setIsAdmin(!!(profile?.is_admin || profile?.role === "owner" || profile?.role === "admin"));
 
-      setUsername(profileResult.data?.username ?? null);
-      setIsAdmin(!!(profileResult.data?.is_admin || profileResult.data?.role === "owner" || profileResult.data?.role === "admin"));
+      const { data: tournament } = await supabase
+        .from("tournaments")
+        .select("rules")
+        .eq("id", tournamentId)
+        .maybeSingle();
 
-      if (tournamentResult.error) { setLoading(false); return; }
-      if (!tournamentResult.data) { router.push("/tournaments"); return; }
-
-      const loadedRules = tournamentResult.data.rules ?? null;
-      setTournamentName(tournamentResult.data.name);
-      setRules(loadedRules);
-      setRulesInput(loadedRules ?? "");
+      const raw = (tournament?.rules as string) ?? "";
+      setRulesRaw(raw);
+      setSections(parseSections(raw));
       setLoading(false);
     }
     load();
-    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tournamentId, supabase, router]);
 
-  async function handleSaveRules() {
-    if (rulesInput.trim().length > 8000) return;
-    setSaving(true);
-    const { error } = await supabase
-      .from("tournaments")
-      .update({ rules: rulesInput.trim() || null })
-      .eq("id", tournamentId);
-    if (!error) {
-      setRules(rulesInput.trim() || null);
-      setEditing(false);
-      setShowHint(false);
-      // Reset accordion: open first section
-      setOpenSections(new Set([0]));
-    }
-    setSaving(false);
-  }
-
   function toggleSection(idx: number) {
-    setOpenSections((prev) => {
+    setOpenIdx((prev) => {
       const next = new Set(prev);
       if (next.has(idx)) next.delete(idx);
       else next.add(idx);
@@ -167,7 +91,68 @@ export default function TournamentRulesPage() {
     });
   }
 
-  const sections = useMemo(() => parseRules(rules ?? ""), [rules]);
+  // ── Editor helpers ────────────────────────────────────────────────────────
+
+  function startEditing() {
+    setEditSections(sections.length > 0 ? sections.map((s) => ({ ...s })) : [{ title: "", content: "" }]);
+    setEditMode(true);
+    setSaveError("");
+  }
+
+  function cancelEditing() {
+    setEditMode(false);
+    setSaveError("");
+  }
+
+  function addSection() {
+    setEditSections((prev) => [...prev, { title: "", content: "" }]);
+  }
+
+  function removeSection(idx: number) {
+    setEditSections((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  function updateSection(idx: number, field: keyof RuleSection, value: string) {
+    setEditSections((prev) => prev.map((s, i) => i === idx ? { ...s, [field]: value } : s));
+  }
+
+  function moveSection(idx: number, dir: -1 | 1) {
+    const next = [...editSections];
+    const swap = idx + dir;
+    if (swap < 0 || swap >= next.length) return;
+    [next[idx], next[swap]] = [next[swap], next[idx]];
+    setEditSections(next);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setSaveError("");
+    const trimmed = editSections
+      .map((s) => ({ title: s.title.trim(), content: s.content.trim() }))
+      .filter((s) => s.title || s.content);
+
+    const payload = serializeSections(trimmed);
+
+    const { error } = await supabase
+      .from("tournaments")
+      .update({ rules: payload })
+      .eq("id", tournamentId);
+
+    if (error) {
+      setSaveError("Failed to save rules. Please try again.");
+      setSaving(false);
+      return;
+    }
+
+    setRulesRaw(payload);
+    setSections(trimmed);
+    setEditMode(false);
+    setSaving(false);
+    setSaveSuccess(true);
+    setTimeout(() => setSaveSuccess(false), 3000);
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -177,7 +162,7 @@ export default function TournamentRulesPage() {
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
           </svg>
-          <span className="text-sm text-gray-500">Loading...</span>
+          <span className="text-sm text-gray-500">Loading rules...</span>
         </div>
       </div>
     );
@@ -187,9 +172,9 @@ export default function TournamentRulesPage() {
     <div className="min-h-screen bg-gray-950 text-white font-sans">
       <Navbar username={username} />
 
-      {/* Tab nav */}
+      {/* ── Tab nav ────────────────────────────────────────────── */}
       <div className="border-b border-white/8 bg-gray-950/80 backdrop-blur-sm sticky top-0 z-10 mt-16">
-        <div className="max-w-5xl mx-auto px-6">
+        <div className="max-w-3xl mx-auto px-6">
           <nav className="flex items-center gap-0 -mb-px">
             <a href={`/tournaments/${tournamentId}`} className="px-4 py-3.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 hover:border-gray-600 transition-all duration-150">Overview</a>
             <a href={`/tournaments/${tournamentId}`} className="px-4 py-3.5 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-300 hover:border-gray-600 transition-all duration-150">Participants</a>
@@ -199,25 +184,18 @@ export default function TournamentRulesPage() {
         </div>
       </div>
 
-      <main className="max-w-5xl mx-auto px-6 py-8 space-y-4">
+      <main className="max-w-3xl mx-auto px-6 py-8 space-y-5">
 
-        {/* Header row */}
+        {/* Header */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center shrink-0">
-              <svg className="w-4.5 h-4.5 text-violet-400" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-              </svg>
-            </div>
-            <div>
-              <p className="text-[10px] text-gray-500 uppercase tracking-wider font-medium">Rules</p>
-              <h1 className="text-base font-bold text-white leading-tight">{tournamentName ?? "Tournament"}</h1>
-            </div>
+          <div>
+            <h1 className="text-xl font-extrabold text-white tracking-tight">Rules</h1>
+            <p className="text-xs text-gray-500 mt-0.5">{sections.length} section{sections.length !== 1 ? "s" : ""}</p>
           </div>
-          {isAdmin && !editing && (
+          {isAdmin && !editMode && (
             <button
-              onClick={() => { setRulesInput(rules ?? ""); setEditing(true); }}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-white/10 bg-white/5 text-gray-300 text-sm font-medium hover:bg-white/10 transition-all duration-200"
+              onClick={startEditing}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/8 hover:bg-white/12 border border-white/10 text-gray-300 text-sm font-medium transition-all duration-200"
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
@@ -227,170 +205,167 @@ export default function TournamentRulesPage() {
           )}
         </div>
 
-        {/* ── Editor ─────────────────────────────────────────────────────────── */}
-        {editing ? (
-          <div className="space-y-3">
-            {/* Format hint toggle */}
-            <button
-              onClick={() => setShowHint((v) => !v)}
-              className="flex items-center gap-2 text-xs text-violet-400 hover:text-violet-300 transition-colors"
-            >
-              <svg className={`w-3.5 h-3.5 transition-transform ${showHint ? "rotate-90" : ""}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-              </svg>
-              Format guide
-            </button>
+        {/* Success toast */}
+        {saveSuccess && (
+          <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-green-500/10 border border-green-500/20 text-green-400 text-sm">
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Rules saved successfully.
+          </div>
+        )}
 
-            {showHint && (
-              <div className="rounded-xl border border-violet-500/15 bg-violet-500/5 p-4 space-y-2">
-                <p className="text-[10px] font-semibold text-violet-400 uppercase tracking-wider mb-3">Syntax</p>
-                <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
-                  <code className="text-violet-300 font-mono"># Section Title</code>
-                  <span className="text-gray-400">Collapsible section</span>
-                  <code className="text-violet-300 font-mono">## Subsection</code>
-                  <span className="text-gray-400">Sub-heading inside section</span>
-                  <code className="text-violet-300 font-mono">**Category**</code>
-                  <span className="text-gray-400">Bold category label</span>
-                  <code className="text-violet-300 font-mono">Setting - Value</code>
-                  <span className="text-gray-400">Formatted key-value row</span>
-                </div>
-                <div className="mt-3 pt-3 border-t border-white/8">
-                  <p className="text-[10px] text-gray-500 mb-2">Example:</p>
-                  <pre className="text-[10px] text-gray-400 font-mono leading-relaxed whitespace-pre-wrap">{FORMAT_HINT}</pre>
-                </div>
-              </div>
-            )}
-
-            <textarea
-              value={rulesInput}
-              onChange={(e) => setRulesInput(e.target.value)}
-              rows={16}
-              maxLength={8000}
-              placeholder={FORMAT_HINT}
-              className="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white text-sm focus:outline-none focus:border-violet-500 focus:ring-1 focus:ring-violet-500 transition-colors duration-200 resize-none font-mono"
-            />
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] text-gray-600">{rulesInput.length} / 8000</span>
-              <div className="flex items-center gap-3">
+        {/* ── Edit mode ──────────────────────────────────────── */}
+        {editMode && (
+          <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 overflow-hidden">
+            <div className="px-6 py-4 border-b border-white/8 flex items-center justify-between">
+              <p className="text-sm font-semibold text-violet-300">Editing Rules</p>
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => { setEditing(false); setRulesInput(rules ?? ""); setShowHint(false); }}
-                  disabled={saving}
-                  className="px-4 py-2 rounded-xl border border-white/10 bg-white/5 text-gray-300 text-sm font-medium hover:bg-white/10 disabled:opacity-50 transition-all duration-200"
+                  onClick={cancelEditing}
+                  className="px-3 py-1.5 rounded-lg text-xs text-gray-400 hover:text-white border border-white/10 hover:border-white/20 transition-all duration-150"
                 >
                   Cancel
                 </button>
                 <button
-                  onClick={handleSaveRules}
+                  onClick={handleSave}
                   disabled={saving}
-                  className="flex items-center gap-2 px-5 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium transition-all duration-200"
+                  className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white transition-all duration-150"
                 >
-                  {saving ? (
-                    <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>Saving...</>
-                  ) : "Save Rules"}
+                  {saving ? "Saving..." : "Save"}
                 </button>
               </div>
             </div>
-          </div>
 
-        ) : sections.length === 0 ? (
-          /* ── Empty state ────────────────────────────────────────────────── */
-          <div className="rounded-2xl border border-white/8 bg-white/4 p-12 flex flex-col items-center justify-center text-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/8 flex items-center justify-center">
-              <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-              </svg>
-            </div>
-            <p className="text-white font-semibold">No rules yet</p>
-            <p className="text-gray-500 text-sm">
-              {isAdmin ? "Click Edit Rules to add tournament rules" : "No rules have been set for this tournament."}
-            </p>
-          </div>
-
-        ) : (
-          /* ── Accordion sections ─────────────────────────────────────────── */
-          <div className="space-y-2">
-            {sections.map((section, sIdx) => {
-              const isOpen = openSections.has(sIdx);
-              const hasTitle = !!section.title;
-
-              // If no title, render as plain card (no accordion)
-              if (!hasTitle) {
-                return (
-                  <div key={sIdx} className="rounded-2xl border border-white/8 bg-white/4 p-5">
-                    {section.blocks.map((block, bIdx) => renderBlock(block, bIdx))}
-                  </div>
-                );
-              }
-
-              return (
-                <div key={sIdx} className="rounded-2xl border border-white/8 bg-white/4 overflow-hidden">
-                  {/* Accordion header */}
-                  <button
-                    onClick={() => toggleSection(sIdx)}
-                    className="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-white/4 transition-colors duration-150"
-                  >
-                    <span className="text-sm font-semibold text-white">{section.title}</span>
-                    <svg
-                      className={`w-4 h-4 text-gray-500 transition-transform duration-200 shrink-0 ${isOpen ? "rotate-180" : ""}`}
-                      fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
-                    </svg>
-                  </button>
-
-                  {/* Accordion body */}
-                  {isOpen && (
-                    <div className="px-5 pb-5 pt-1 border-t border-white/6 space-y-1">
-                      {section.blocks.map((block, bIdx) => renderBlock(block, bIdx))}
+            <div className="p-6 space-y-4">
+              {editSections.map((section, idx) => (
+                <div key={idx} className="rounded-xl border border-white/10 bg-white/3 overflow-hidden">
+                  {/* Section toolbar */}
+                  <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/8 bg-white/3">
+                    <span className="text-[10px] font-semibold text-gray-600 uppercase tracking-wider w-5 text-center">{idx + 1}</span>
+                    <input
+                      type="text"
+                      value={section.title}
+                      onChange={(e) => updateSection(idx, "title", e.target.value)}
+                      placeholder="Section title..."
+                      className="flex-1 bg-transparent text-sm font-semibold text-white placeholder-gray-600 focus:outline-none"
+                    />
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        onClick={() => moveSection(idx, -1)}
+                        disabled={idx === 0}
+                        className="p-1 rounded text-gray-600 hover:text-gray-300 disabled:opacity-30 transition-colors"
+                        title="Move up"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => moveSection(idx, 1)}
+                        disabled={idx === editSections.length - 1}
+                        className="p-1 rounded text-gray-600 hover:text-gray-300 disabled:opacity-30 transition-colors"
+                        title="Move down"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => removeSection(idx)}
+                        className="p-1 rounded text-gray-600 hover:text-red-400 transition-colors ml-1"
+                        title="Remove section"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
                     </div>
-                  )}
+                  </div>
+                  {/* Content area */}
+                  <textarea
+                    value={section.content}
+                    onChange={(e) => updateSection(idx, "content", e.target.value)}
+                    placeholder="Write the section content here..."
+                    rows={5}
+                    className="w-full px-4 py-3 bg-transparent text-sm text-gray-300 placeholder-gray-700 focus:outline-none resize-y leading-relaxed"
+                  />
                 </div>
-              );
-            })}
+              ))}
+
+              {/* Add section */}
+              <button
+                onClick={addSection}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-dashed border-white/15 text-gray-500 hover:text-violet-400 hover:border-violet-500/30 text-sm font-medium transition-all duration-200"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                </svg>
+                Add Section
+              </button>
+
+              {saveError && (
+                <p className="text-xs text-red-400 text-center">{saveError}</p>
+              )}
+            </div>
           </div>
         )}
+
+        {/* ── View mode: accordion ──────────────────────────── */}
+        {!editMode && (
+          sections.length === 0 ? (
+            <div className="rounded-2xl border border-white/8 bg-white/4 p-16 flex flex-col items-center justify-center text-center gap-4">
+              <div className="w-14 h-14 rounded-2xl bg-white/5 border border-white/8 flex items-center justify-center">
+                <svg className="w-7 h-7 text-gray-600" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25zM6.75 12h.008v.008H6.75V12zm0 3h.008v.008H6.75V15zm0 3h.008v.008H6.75V18z" />
+                </svg>
+              </div>
+              <div>
+                <p className="text-white font-semibold">No rules posted yet</p>
+                <p className="text-gray-500 text-sm mt-1">
+                  {isAdmin ? "Click Edit Rules to add tournament rules" : "Rules will appear when the admin adds them"}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {sections.map((section, idx) => {
+                const isOpen = openIdx.has(idx);
+                return (
+                  <div key={idx} className="rounded-2xl border border-white/8 bg-white/4 overflow-hidden">
+                    {/* Accordion header */}
+                    <button
+                      onClick={() => toggleSection(idx)}
+                      className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-white/3 transition-colors duration-150"
+                    >
+                      <span className="text-sm font-semibold text-white">{section.title || `Section ${idx + 1}`}</span>
+                      <svg
+                        className={`w-4 h-4 text-gray-500 shrink-0 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+                        fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                      </svg>
+                    </button>
+
+                    {/* Accordion body */}
+                    {isOpen && section.content && (
+                      <div className="px-5 pb-5 border-t border-white/8 pt-4">
+                        <p className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{section.content}</p>
+                      </div>
+                    )}
+                    {isOpen && !section.content && (
+                      <div className="px-5 pb-4 border-t border-white/8 pt-4">
+                        <p className="text-xs text-gray-600 italic">No content for this section.</p>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )
+        )}
+
       </main>
     </div>
   );
-}
-
-// ── Block renderer ─────────────────────────────────────────────────────────────
-function renderBlock(block: RuleBlock, key: number) {
-  switch (block.type) {
-    case "subsection":
-      return (
-        <div key={key} className="mt-4 mb-2 first:mt-2">
-          <p className="text-sm font-bold text-violet-400">{block.title}</p>
-        </div>
-      );
-
-    case "category":
-      return (
-        <div key={key} className="mt-3 mb-1 first:mt-0">
-          <p className="text-xs font-semibold text-gray-300 uppercase tracking-wide">{block.title}</p>
-        </div>
-      );
-
-    case "setting":
-      return (
-        <div key={key} className="flex items-baseline gap-2 py-0.5 pl-1">
-          <span className="text-sm text-gray-300 min-w-0 flex-1">{block.key}</span>
-          <span className="text-xs text-gray-500 shrink-0">—</span>
-          <span className="text-sm font-medium text-white shrink-0">{block.value}</span>
-        </div>
-      );
-
-    case "text":
-      return (
-        <p key={key} className="text-sm text-gray-400 leading-relaxed whitespace-pre-wrap mt-2">
-          {block.content}
-        </p>
-      );
-
-    default:
-      return null;
-  }
 }

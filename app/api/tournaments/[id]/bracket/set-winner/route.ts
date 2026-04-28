@@ -73,13 +73,11 @@ export async function POST(
     return NextResponse.json({ error: "Winner and loser cannot be the same team." }, { status: 400 });
   }
 
-  // Update match using server-derived team IDs for scores
+  // Update match — only set winner and status; preserve any captain-submitted scores
   const { error: updateError } = await supabase
     .from("matches")
     .update({
       winner_id: winnerId,
-      score_a: winnerId === match.team_a_id ? 1 : 0,
-      score_b: winnerId === match.team_b_id ? 1 : 0,
       status: "completed",
     })
     .eq("id", matchId);

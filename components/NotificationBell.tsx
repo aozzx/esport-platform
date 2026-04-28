@@ -93,7 +93,7 @@ export default function NotificationBell() {
   const containerRef = useRef<HTMLDivElement>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
 
-  const unread = notifications.filter((n) => !n.is_read).length;
+  const unread = notifications.length;
 
   useEffect(() => {
     async function init() {
@@ -136,19 +136,19 @@ export default function NotificationBell() {
     return () => document.removeEventListener("mousedown", onMouseDown);
   }, []);
 
-  async function markRead(id: string) {
-    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
-    await supabase.from("notifications").update({ is_read: true }).eq("id", id);
+  async function dismiss(id: string) {
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+    await supabase.from("notifications").delete().eq("id", id);
   }
 
-  async function markAllRead() {
+  async function dismissAll() {
     if (!userId) return;
-    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
-    await supabase.from("notifications").update({ is_read: true }).eq("user_id", userId).eq("is_read", false);
+    setNotifications([]);
+    await supabase.from("notifications").delete().eq("user_id", userId);
   }
 
   async function handleClick(n: Notification) {
-    if (!n.is_read) await markRead(n.id);
+    await dismiss(n.id);
     setIsOpen(false);
     router.push(getHref(n));
   }
@@ -190,10 +190,10 @@ export default function NotificationBell() {
             </div>
             {unread > 0 && (
               <button
-                onClick={markAllRead}
+                onClick={dismissAll}
                 className="text-xs text-gray-500 hover:text-violet-400 transition-colors duration-150"
               >
-                Mark all read
+                Clear all
               </button>
             )}
           </div>
@@ -212,20 +212,16 @@ export default function NotificationBell() {
                 <button
                   key={n.id}
                   onClick={() => handleClick(n)}
-                  className={`w-full text-left flex items-start gap-3 px-4 py-3 transition-colors duration-150 ${
-                    n.is_read ? "hover:bg-white/3" : "bg-violet-500/5 hover:bg-violet-500/8"
-                  }`}
+                  className="w-full text-left flex items-start gap-3 px-4 py-3 bg-violet-500/5 hover:bg-violet-500/8 transition-colors duration-150"
                 >
                   <NotifIcon type={n.type} />
                   <div className="flex-1 min-w-0">
-                    <p className={`text-sm leading-snug ${n.is_read ? "text-gray-400" : "text-white"}`}>
+                    <p className="text-sm leading-snug text-white">
                       {n.message}
                     </p>
                     <p className="text-xs text-gray-600 mt-0.5">{timeAgo(n.created_at)}</p>
                   </div>
-                  {!n.is_read && (
-                    <div className="w-1.5 h-1.5 rounded-full bg-violet-500 mt-2 shrink-0" />
-                  )}
+                  <div className="w-1.5 h-1.5 rounded-full bg-violet-500 mt-2 shrink-0" />
                 </button>
               ))
             )}
